@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Validate tagged source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate and check source
+        run: |
+          composer validate --strict
+          composer install --no-interaction --no-progress --prefer-dist
+          composer audit --locked --no-interaction
+          composer check
+          find assets/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Build deterministic release archive
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bin/build-release.sh
+
+      - name: Verify release archive
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          artifact="dist/ffl-bridge-for-woocommerce-${version}.zip"
+          test -f "${artifact}"
+          test -f "${artifact}.sha256"
+          unzip -t "${artifact}"
+          if unzip -Z1 "${artifact}" | grep -E '(^|/)(\.distignore|\.git|\.github|bin|tests|vendor|composer\.(json|lock)|php(cs|unit)\.xml\.dist|CHANGELOG\.md|CONTRIBUTING\.md|README\.md|SECURITY\.md)(/|$)'; then
+            echo 'Release archive contains a development-only path.' >&2
+            exit 1
+          fi
+
+      - name: Upload validated release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  release:
+    name: Publish release
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download validated release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify downloaded assets
+        run: |
+          cd dist
+          sha256sum --check ./*.sha256
+          unzip -t ./*.zip
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          artifact="dist/ffl-bridge-for-woocommerce-${version}.zip"
+          gh release create "${GITHUB_REF_NAME}" \
+            "${artifact}" \
+            "${artifact}.sha256" \
+            --generate-notes \
+            --title "FFL Bridge for WooCommerce ${version}" \
+            --verify-tag

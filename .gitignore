@@ -1,0 +1,17 @@
+.DS_Store
+._*
+.env
+.env.*
+.phpcs-cache
+.phpunit.cache/
+.phpunit.result.cache
+*.key
+*.p12
+*.pem
+*.pfx
+*.sql
+*.sqlite*
+auth.json
+dist/
+node_modules/
+vendor/

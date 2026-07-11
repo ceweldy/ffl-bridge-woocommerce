@@ -1,0 +1,12 @@
+#ffl-bridge-test-result {
+	display: inline-block;
+	margin-left: 0.5rem;
+}
+
+.ffl-bridge-test-success {
+	color: #008a20;
+}
+
+.ffl-bridge-test-error {
+	color: #b32d2e;
+}
