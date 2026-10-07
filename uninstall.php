@@ -16,4 +16,7 @@ delete_option( 'ffl_bridge_required' );
 delete_option( 'ffl_bridge_categories' );
 delete_option( 'ffl_bridge_result_scope' );
 delete_option( 'ffl_bridge_preferred_licenses' );
+delete_option( 'ffl_bridge_fallback' );
+delete_option( 'ffl_bridge_coverage_log' );
+delete_metadata( 'user', 0, 'ffl_bridge_coverage_dismissed', '', true );
 delete_option( 'ffl_bridge_settings_version' );

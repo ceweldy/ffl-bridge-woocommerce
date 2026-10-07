@@ -14,9 +14,17 @@
 		}
 
 		button.addEventListener( 'click', function () {
+			var zip = document.getElementById( 'ffl-bridge-test-zip' );
+			var radius = document.getElementById( 'ffl-bridge-test-radius' );
+			if ( zip && zip.value && ! zip.reportValidity() ) {
+				return;
+			}
+
 			var body = new URLSearchParams( {
 				action: 'ffl_bridge_test_connection',
 				nonce: config.nonce || '',
+				zip: zip ? zip.value : '',
+				radius: radius ? radius.value : '',
 			} );
 
 			button.disabled = true;

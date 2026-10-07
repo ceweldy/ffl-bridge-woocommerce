@@ -69,6 +69,7 @@ function ffl_bridge_init(): void {
 
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-api-client.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-network.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-coverage.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-selection.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-settings.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-checkout.php';
@@ -78,6 +79,7 @@ function ffl_bridge_init(): void {
 	FFL_Bridge_Settings::init();
 	FFL_Bridge_Checkout::init();
 	FFL_Bridge_Order::init();
+	FFL_Bridge_Coverage::init();
 	FFL_Bridge_Blocks_Integration::init();
 }
 add_action( 'plugins_loaded', 'ffl_bridge_init', 20 );
@@ -94,6 +96,7 @@ function ffl_bridge_activate(): void {
 	add_option( 'ffl_bridge_categories', array(), '', false );
 	add_option( 'ffl_bridge_result_scope', 'all', '', false );
 	add_option( 'ffl_bridge_preferred_licenses', array(), '', false );
+	add_option( 'ffl_bridge_fallback', 'no', '', false );
 	add_option( 'ffl_bridge_settings_version', FFL_BRIDGE_VERSION, '', false );
 }
 register_activation_hook( __FILE__, 'ffl_bridge_activate' );
@@ -128,6 +131,7 @@ function ffl_bridge_add_privacy_policy_content(): void {
 	}
 
 	$content  = '<p>' . esc_html__( 'When a shopper searches for an FFL dealer, this site sends the search ZIP code, radius, site origin, and technical request metadata to FFL Bridge. The site credential is transmitted server-to-server and is never sent to the shopper\'s browser.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	$content .= '<p>' . esc_html__( 'To show store administrators where shoppers could not find a transfer dealer, the plugin stores the first three digits of a searched ZIP code, the search radius, and counts for up to 30 days. These records are not linked to a shopper or an order.', 'ffl-bridge-for-woocommerce' ) . '</p>';
 	$content .= '<p>' . wp_kses_post(
 		sprintf(
 			/* translators: 1: privacy-policy URL, 2: terms URL. */

@@ -109,11 +109,137 @@ final class NetworkTest extends FFL_Bridge_TestCase {
 	}
 
 	public function test_connection_summary_reports_network_coverage(): void {
-		$summary = FFL_Bridge_Settings::connection_summary( array( 'verified' => 2, 'directory' => 23, 'unknown' => 0 ), 25 );
-		$this->assertStringContainsString( '25 directory listings, 2 in the verified checkout network', $summary );
+		$transfer = array(
+			'dealers'  => array(
+				$this->dealer( 'a', '1-11-111-11-1A-00001', true ),
+				$this->dealer( 'b', '1-11-111-11-1A-00002', false ),
+			),
+			'coverage' => null,
+			'reason'   => '',
+		);
 
-		$legacy = FFL_Bridge_Settings::connection_summary( array( 'verified' => 0, 'directory' => 0, 'unknown' => 3 ), 3 );
+		$summary = FFL_Bridge_Settings::connection_summary( '32174', 25, $transfer, null );
+		$this->assertStringContainsString( 'Within 25 miles of 32174: 2 dealers listed as accepting transfers, 1 in the verified checkout network.', $summary );
+		$this->assertStringNotContainsString( 'fallback', $summary );
+
+		$legacy = FFL_Bridge_Settings::connection_summary( '32174', 25, array( 'dealers' => array( $this->dealer( 'a', '1-11-111-11-1A-00001', null ) ) ), null );
 		$this->assertStringContainsString( 'did not report checkout-network status', $legacy );
+	}
+
+	public function test_connection_summary_reports_zero_coverage_and_fallback_potential(): void {
+		$transfer = array(
+			'dealers'  => array(),
+			'coverage' => array( 'dealers_in_radius' => 41 ),
+			'reason'   => 'NO_TRANSFER_DEALERS_IN_RADIUS',
+		);
+
+		$summary = FFL_Bridge_Settings::connection_summary( '48047', 100, $transfer, 25 );
+
+		$this->assertStringContainsString( 'Within 100 miles of 48047: 0 dealers listed as accepting transfers, 0 in the verified checkout network.', $summary );
+		$this->assertStringContainsString( 'FFL Bridge reports 41 licensed dealers in this area.', $summary );
+		$this->assertStringContainsString( '25 nearby listed dealers could be offered as unconfirmed', $summary );
+	}
+
+	public function test_fallback_is_off_by_default(): void {
+		$this->assertFalse( FFL_Bridge_Network::fallback_enabled() );
+		$this->assertSame( 'no', FFL_Bridge_Network::sanitize_fallback( '1' ) );
+
+		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_fallback'] = 'yes';
+		$this->assertTrue( FFL_Bridge_Network::fallback_enabled() );
+	}
+
+	public function test_resolve_returns_confirmed_without_calling_the_nearby_search(): void {
+		$called   = false;
+		$resolved = FFL_Bridge_Network::resolve(
+			array( 'dealers' => array( $this->dealer( 'verified', '1-11-111-11-1A-00001', true ) ) ),
+			static function () use ( &$called ): array {
+				$called = true;
+				return array( 'dealers' => array() );
+			},
+			FFL_Bridge_Network::SCOPE_ALL,
+			array(),
+			true
+		);
+
+		$this->assertSame( FFL_Bridge_Network::OUTCOME_CONFIRMED, $resolved['outcome'] );
+		$this->assertFalse( $called );
+	}
+
+	public function test_zero_transfer_results_without_fallback_is_none_and_skips_nearby_search(): void {
+		$called   = false;
+		$resolved = FFL_Bridge_Network::resolve(
+			array( 'dealers' => array() ),
+			function () use ( &$called ): array {
+				$called = true;
+				return array( 'dealers' => array( $this->dealer( 'nearby', '1-11-111-11-1A-00001', false ) ) );
+			},
+			FFL_Bridge_Network::SCOPE_ALL,
+			array(),
+			false
+		);
+
+		$this->assertSame( FFL_Bridge_Network::OUTCOME_NONE, $resolved['outcome'] );
+		$this->assertSame( array(), $resolved['dealers'] );
+		$this->assertFalse( $called );
+	}
+
+	public function test_zero_transfer_results_with_fallback_offers_unconfirmed_nearby_dealers(): void {
+		$resolved = FFL_Bridge_Network::resolve(
+			array( 'dealers' => array() ),
+			fn (): array => array(
+				'dealers' => array(
+					$this->dealer( 'near', '1-11-111-11-1A-00001', false ),
+					$this->dealer( 'far-preferred', '1-11-111-11-1A-00002', null ),
+				),
+			),
+			FFL_Bridge_Network::SCOPE_VERIFIED,
+			array( '1-11-111-11-1A-00002' ),
+			true
+		);
+
+		$this->assertSame( FFL_Bridge_Network::OUTCOME_FALLBACK, $resolved['outcome'] );
+		$this->assertSame( array( 'far-preferred', 'near' ), array_column( $resolved['dealers'], 'name' ) );
+		$this->assertSame( array( 'unconfirmed', 'unconfirmed' ), array_column( $resolved['dealers'], 'network' ) );
+		$this->assertSame( array( true, true ), array_column( $resolved['dealers'], 'selectable' ) );
+	}
+
+	public function test_fallback_reuses_directory_only_transfer_results_without_a_second_search(): void {
+		$called   = false;
+		$resolved = FFL_Bridge_Network::resolve(
+			array( 'dealers' => array( $this->dealer( 'unverified', '1-11-111-11-1A-00001', false ) ) ),
+			static function () use ( &$called ): array {
+				$called = true;
+				return array( 'dealers' => array() );
+			},
+			FFL_Bridge_Network::SCOPE_ALL,
+			array(),
+			true
+		);
+
+		$this->assertSame( FFL_Bridge_Network::OUTCOME_FALLBACK, $resolved['outcome'] );
+		$this->assertSame( array( 'unverified' ), array_column( $resolved['dealers'], 'name' ) );
+		$this->assertFalse( $called );
+	}
+
+	public function test_fallback_with_failed_or_empty_nearby_search_is_none(): void {
+		foreach ( array( new WP_Error( 'ffl_bridge_api_error', 'x' ), array( 'dealers' => array() ) ) as $nearby ) {
+			$resolved = FFL_Bridge_Network::resolve(
+				array( 'dealers' => array() ),
+				static fn () => $nearby,
+				FFL_Bridge_Network::SCOPE_ALL,
+				array(),
+				true
+			);
+
+			$this->assertSame( FFL_Bridge_Network::OUTCOME_NONE, $resolved['outcome'] );
+			$this->assertSame( array(), $resolved['dealers'] );
+		}
+	}
+
+	public function test_fallback_keeps_verified_dealers_classified_as_verified(): void {
+		$prepared = FFL_Bridge_Network::prepare_fallback( array( $this->dealer( 'v', '1-11-111-11-1A-00001', true ) ), array() );
+
+		$this->assertSame( 'verified', $prepared[0]['network'] );
 	}
 
 	/**

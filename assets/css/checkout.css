@@ -142,3 +142,31 @@
 .ffl-bridge-theme-dark .ffl-bridge-badge.is-directory {
 	color: #dcdcde;
 }
+
+.ffl-bridge-notice {
+	margin: 0;
+	padding: 0.75rem 1rem;
+	border-left: 4px solid #dba617;
+	background: #fcf9e8;
+	color: #1e1e1e;
+}
+
+.ffl-bridge-badge.is-unconfirmed {
+	color: #996800;
+	font-weight: 600;
+}
+
+.ffl-bridge-unconfirmed-note {
+	margin: 0.25rem 0 0;
+	font-size: 0.9em;
+	font-weight: 600;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-notice {
+	background: #3a3320;
+	color: #f5f5f5;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-badge.is-unconfirmed {
+	color: #f0c33c;
+}

@@ -7,6 +7,7 @@ FFL Bridge for WooCommerce adds server-verified FFL dealer selection to WooComme
 - Supports both classic WooCommerce checkout and the WooCommerce Checkout Block.
 - Searches the FFL Bridge service by ZIP code and radius without exposing the merchant API key to the shopper's browser.
 - Labels each result as part of the verified checkout network or as a public directory listing. Only verified network dealers can be selected. Merchants can hide directory listings and mark their own preferred dealers.
+- Explains to shoppers when no transfer-accepting dealer is nearby, warns store administrators about coverage gaps, and can optionally offer nearby dealers labeled "Transfer not confirmed" (off by default).
 - Retrieves the selected dealer from FFL Bridge on the server before saving a canonical, allowlisted record to the order.
 - Can require selection for all products or only configured WooCommerce product categories.
 - Displays stored dealer details in WooCommerce order administration, order emails, confirmation pages, and customer order details.
@@ -50,7 +51,7 @@ Version 1.0.x sent the API key to the checkout browser. If a key was ever used w
 
 Dealer search and verification depend on the hosted FFL Bridge service at `https://www.fflbridge.com/api/v1`; the plugin cannot provide those functions when that service is unavailable.
 
-For a search, the plugin sends the shopper-entered ZIP code and search radius, the site's public origin, the merchant API key, and standard server request metadata. When a shopper selects a result, the plugin sends the dealer UUID to retrieve the current dealer record. It does not intentionally send the shopper's name, email address, billing/shipping address, or payment information to FFL Bridge. Search results may be cached in WordPress for up to five minutes. The current selection is held in the WooCommerce session, and selected dealer details are stored in the merchant's WooCommerce order and may appear in order emails and customer-facing order views.
+For a search, the plugin sends the shopper-entered ZIP code and search radius, the site's public origin, the merchant API key, and standard server request metadata. When a shopper selects a result, the plugin sends the dealer UUID to retrieve the current dealer record. It does not intentionally send the shopper's name, email address, billing/shipping address, or payment information to FFL Bridge. Search results may be cached in WordPress for up to five minutes. Searches that find no confirmed transfer dealer are logged by three-digit ZIP area, radius, and count for up to 30 days so administrators can see coverage gaps. The current selection is held in the WooCommerce session, and selected dealer details are stored in the merchant's WooCommerce order and may appear in order emails and customer-facing order views.
 
 Review the [FFL Bridge Privacy Policy](https://www.fflbridge.com/privacy) and [Terms of Service](https://www.fflbridge.com/terms). WordPress also offers suggested privacy-policy text for the plugin under **Settings > Privacy**. Merchants are responsible for adapting that text to their actual store configuration and legal obligations.
 

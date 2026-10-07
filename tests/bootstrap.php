@@ -16,6 +16,7 @@ $GLOBALS['ffl_bridge_test_wc']         = null;
 $GLOBALS['ffl_bridge_test_home_url']   = 'https://store.example.test/';
 $GLOBALS['ffl_bridge_test_transients'] = array();
 $GLOBALS['ffl_bridge_test_settings_errors'] = array();
+$GLOBALS['ffl_bridge_test_filters']         = array();
 
 /** Minimal WordPress error object used by the runtime. */
 class WP_Error {
@@ -143,6 +144,20 @@ function get_option( string $key, mixed $default = false ): mixed {
 	return $GLOBALS['ffl_bridge_test_options'][ $key ] ?? $default;
 }
 
+function update_option( string $key, mixed $value, mixed $autoload = null ): bool {
+	$GLOBALS['ffl_bridge_test_options'][ $key ] = $value;
+	return true;
+}
+
+function _n( string $single, string $plural, int $number, string $domain = '' ): string {
+	return 1 === $number ? $single : $plural;
+}
+
+function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
+	$callback = $GLOBALS['ffl_bridge_test_filters'][ $hook ] ?? null;
+	return is_callable( $callback ) ? $callback( $value, ...$args ) : $value;
+}
+
 function sanitize_text_field( mixed $value ): string {
 	if ( ! is_scalar( $value ) ) {
 		return '';
@@ -200,6 +215,7 @@ function set_transient( string $key, mixed $value, int $expiration ): bool {
 
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-api-client.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-network.php';
+require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-coverage.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-selection.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-checkout.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-order.php';

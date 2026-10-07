@@ -22,6 +22,8 @@ Features:
 * Search by five-digit ZIP code and supported radius
 * Clear labels for the verified checkout network and public directory listings, which cannot be selected
 * Optional store preferred dealer list, kept in WordPress
+* Clear shopper messaging and an admin coverage notice when no transfer-accepting dealer is found nearby
+* Optional fallback, off by default, offering nearby dealers labeled "Transfer not confirmed"
 * Required or optional selection for all products or configured categories
 * Dealer details in order administration, order emails, confirmation pages, and customer order details
 * WooCommerce High-Performance Order Storage compatibility
@@ -39,7 +41,7 @@ This plugin records dealer metadata for the retailer's fulfillment workflow. It 
 
 Dealer search and verification depend on the hosted FFL Bridge service at `https://www.fflbridge.com/api/v1`. These features do not work when the service is unavailable.
 
-When a shopper searches, the plugin sends the shopper-entered ZIP code and radius, the site's public origin, the merchant API key, and standard server request metadata. When a shopper selects a dealer, the plugin sends the dealer UUID to retrieve the current record. The plugin does not intentionally send the shopper's name, email address, billing/shipping address, or payment information to FFL Bridge. Search results may be cached in WordPress for up to five minutes. The current selection is held in the WooCommerce session, and the selected dealer fields are stored by the merchant in the WooCommerce order.
+When a shopper searches, the plugin sends the shopper-entered ZIP code and radius, the site's public origin, the merchant API key, and standard server request metadata. When a shopper selects a dealer, the plugin sends the dealer UUID to retrieve the current record. The plugin does not intentionally send the shopper's name, email address, billing/shipping address, or payment information to FFL Bridge. Search results may be cached in WordPress for up to five minutes. When a search finds no dealer confirmed to accept transfers, the plugin keeps the first three digits of the ZIP code, the radius, and counts for up to 30 days to show store administrators where coverage is missing. The current selection is held in the WooCommerce session, and the selected dealer fields are stored by the merchant in the WooCommerce order.
 
 Use of the service is governed by the [FFL Bridge Terms of Service](https://www.fflbridge.com/terms) and [Privacy Policy](https://www.fflbridge.com/privacy).
 
@@ -71,6 +73,10 @@ Yes. Version 1.1.0 supports both classic WooCommerce checkout and the WooCommerc
 = Why can some dealers not be selected? =
 
 Search covers the public FFL directory. Only dealers in the FFL Bridge verified checkout network can be selected, because they have a current, verified license copy on file and accept transfers. Other dealers are labeled "Directory listing only". The settings page can hide them, and its connection test shows how many dealers near a sample ZIP code are in the verified network.
+
+= What happens when no transfer-accepting dealer is nearby? =
+
+The shopper sees a message explaining that no dealer within the chosen radius is confirmed to accept transfers, and store administrators see a coverage notice. If you turn on the fallback setting, shoppers can instead choose a nearby listed dealer labeled "Transfer not confirmed". The order is marked the same way so staff confirm with the dealer before shipping.
 
 = Does selecting a dealer change the shipping destination? =
 

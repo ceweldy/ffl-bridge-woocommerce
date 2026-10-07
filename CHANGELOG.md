@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Clear shopper messages when no dealer confirmed to accept transfers is found, with radius advice and wording that depends on whether a dealer is required.
+- A coverage log and dismissible admin notice listing three-digit ZIP areas where shoppers found no confirmed transfer dealer, plus a coverage table on the settings page.
+- An optional "When no confirmed dealer is found" fallback, off by default, that offers nearby listed dealers labeled "Transfer not confirmed". Orders record `_ffl_bridge_transfer_confirmed` and show the warning to staff and customers.
+- A ZIP and radius coverage check in the settings connection test.
+- Support for optional API coverage counts and a zero-result reason when the API sends them.
+- A clear message when the API cannot locate a ZIP code.
+
 - Checkout labels that separate the verified checkout network from public directory listings. Directory-only dealers are shown for reference without a select button and never receive a selection handle.
 - A "Dealers shown at checkout" setting to show the verified network with labeled directory listings (default) or the verified network only.
 - A "Store preferred dealers" setting. Dealers whose license numbers are on the list are labeled and listed first in search results. The list stays in WordPress.

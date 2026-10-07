@@ -10,3 +10,7 @@
 .ffl-bridge-test-error {
 	color: #b32d2e;
 }
+
+.ffl-bridge-coverage-table {
+	max-width: 60rem;
+}

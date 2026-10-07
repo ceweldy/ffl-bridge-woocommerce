@@ -67,7 +67,9 @@
 		if ( dealer.storePreferred ) {
 			badges.appendChild( element( 'span', 'ffl-bridge-badge is-preferred', message( config, 'preferred', 'Store preferred dealer' ) ) );
 		}
-		if ( dealer.network === 'verified' ) {
+		if ( dealer.network === 'unconfirmed' || dealer.transferConfirmed === false ) {
+			badges.appendChild( element( 'span', 'ffl-bridge-badge is-unconfirmed', message( config, 'unconfirmed', 'Transfer not confirmed' ) ) );
+		} else if ( dealer.network === 'verified' ) {
 			badges.appendChild( element( 'span', 'ffl-bridge-badge is-verified', message( config, 'verifiedBadge', 'Verified checkout network' ) ) );
 		} else if ( dealer.network === 'directory' ) {
 			badges.appendChild( element( 'span', 'ffl-bridge-badge is-directory', message( config, 'directoryOnly', 'Directory listing only' ) ) );
@@ -102,7 +104,12 @@
 			if ( selected ) {
 				var selectedBox = element( 'div', 'ffl-bridge-selected' );
 				selectedBox.appendChild( element( 'h4', '', message( config, 'selectedTitle', 'Selected transfer dealer' ) ) );
+				appendBadges( selectedBox, selected, config );
 				appendDealerDetails( selectedBox, selected, false, config );
+				if ( selected.transferConfirmed === false ) {
+					selectedBox.classList.add( 'is-unconfirmed' );
+					selectedBox.appendChild( element( 'p', 'ffl-bridge-unconfirmed-note', message( config, 'contactDealer', 'Contact this dealer to confirm they will accept the transfer before you order.' ) ) );
+				}
 				selectedBox.appendChild( element( 'p', 'ffl-bridge-confirm-notice', message( config, 'confirmNotice', 'Contact the dealer before the order ships.' ) ) );
 
 				var clearButton = element( 'button', 'button ffl-bridge-clear', message( config, 'clear', 'Choose a different dealer' ) );
@@ -174,16 +181,18 @@
 			var results = element( 'div', 'ffl-bridge-results' );
 			results.setAttribute( 'aria-live', 'polite' );
 
-			function renderResults( dealers, hiddenCount ) {
+			function renderResults( dealers, notice ) {
 				results.replaceChildren();
-				var anySelectable = dealers.some( function ( dealer ) {
-					return !! dealer.selectionToken;
-				} );
+				if ( notice ) {
+					var noticeBox = element( 'p', 'ffl-bridge-notice', notice );
+					noticeBox.setAttribute( 'role', 'status' );
+					results.appendChild( noticeBox );
+				}
 
-				if ( ! anySelectable && ( dealers.length || hiddenCount > 0 ) ) {
-					results.appendChild( element( 'p', 'ffl-bridge-empty', message( config, 'noVerified', 'No dealers in this area are in the verified checkout network yet.' ) ) );
-				} else if ( ! dealers.length ) {
-					results.appendChild( element( 'p', 'ffl-bridge-empty', message( config, 'noResults', 'No eligible dealers were found in that area.' ) ) );
+				if ( ! dealers.length ) {
+					if ( ! notice ) {
+						results.appendChild( element( 'p', 'ffl-bridge-empty', message( config, 'noResults', 'No eligible dealers were found in that area.' ) ) );
+					}
 					return;
 				}
 
@@ -197,6 +206,11 @@
 						card.appendChild( element( 'p', 'ffl-bridge-directory-note', message( config, 'directoryNote', 'This dealer is not yet verified for checkout.' ) ) );
 						results.appendChild( card );
 						return;
+					}
+
+					if ( dealer.network === 'unconfirmed' ) {
+						card.classList.add( 'is-unconfirmed' );
+						card.appendChild( element( 'p', 'ffl-bridge-unconfirmed-note', message( config, 'contactDealer', 'Contact this dealer to confirm they will accept the transfer before you order.' ) ) );
 					}
 
 					var selectButton = element( 'button', 'button ffl-bridge-select', message( config, 'select', 'Select dealer' ) );
@@ -236,7 +250,7 @@
 				request( config, 'ffl_bridge_search', { zip: zip.value, radius: radius.value } )
 					.then( function ( data ) {
 						setStatus( '', '' );
-						renderResults( Array.isArray( data.dealers ) ? data.dealers : [], Number( data.hiddenCount ) || 0 );
+						renderResults( Array.isArray( data.dealers ) ? data.dealers : [], typeof data.notice === 'string' ? data.notice : '' );
 					} )
 					.catch( function ( error ) {
 						setStatus( error.message, 'error' );

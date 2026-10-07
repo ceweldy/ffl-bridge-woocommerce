@@ -4,26 +4,82 @@ Date: 2026-10-07
 Plugin reviewed: `ceweldy/ffl-bridge-woocommerce` at 1.1.0 (`3b3a719`)
 API reviewed: `ceweldy/ffl-bridge` at `2af2f6d` (main, 2026-10-03)
 
-## Context and assumptions
+## The prospect's actual request
 
-A prospective merchant emailed support@fflbridge.com. We do not have the exact text yet. This review assumes the four likely asks below. Revisit it when the email is available.
+The email arrived after the first draft of this review. The retailer searches near **ZIP 48047 (New Baltimore, Michigan)** with `acceptsTransfers=true` and gets **zero results, even at 100 miles**. They want only transfer-accepting dealers at checkout.
 
-1. **Merchant preferred dealers at checkout.** The merchant wants its own list of dealers (for example, shops it already works with) to appear at checkout. That includes dealers that are still pending verification.
-2. **Directory vs verified network.** The merchant wants a clear line between the public directory (roughly 77k ATF-listed dealers) and the smaller verified network that can actually be selected at checkout.
-3. **Order status updates and webhooks.** The merchant wants transfer status (for example, dealer received the license, ready to ship, shipped) to flow back into WooCommerce automatically.
-4. **Secure FFL license copy sharing.** The merchant wants to send or receive FFL license copies securely with the dealer the shopper selected.
+Priorities for this PR, in order:
 
-Other assumptions:
+1. Handle zero transfer-accepting results gracefully at checkout. Shoppers get a clear message, and merchants get an admin notice about coverage.
+2. Add an optional, merchant-controlled fallback, off by default. It shows nearby dealers labeled "Transfer not confirmed, contact the dealer to confirm".
+3. Keep the `checkoutEligible` fix from the first draft.
+4. Read coverage counts or a zero-result reason from the API when present, and work without them when absent.
 
-- "Preferred dealers" means a list owned by one merchant, not the global `ffls.is_preferred` flag in the API.
-- "Pending verification" means a dealer whose license copy was uploaded or claimed but not yet approved by FFL Bridge.
-- License sharing direction is not stated. Shippers usually need the receiving dealer's license copy before shipping. Some merchants also send their own license to the dealer. Both directions are covered below.
-- The production numbers below come from the API repo's `backend-release-contract.md` audit dated early October 2026. They were not re-measured for this review.
+## Why the search returns zero
 
-## Headline findings
+This comes from reading `ceweldy/ffl-bridge` at `2af2f6d`. It was not checked against production data.
 
-- **The verified checkout network is currently empty in production.** The API's own release audit reports 77,514 active listed dealers, "zero independently verified ever/current and zero eligible". Until FFL Bridge verifies dealers, any merchant with **Require a selection = Yes** cannot complete a checkout for applicable products. That matters more than any of the four asks and should be raised with the prospect before onboarding.
-- **Before this change, the plugin showed directory dealers that could never be selected.** `/api/v1/search` returns every ATF-listed active dealer in the radius and marks the eligible ones with `checkoutEligible`. Plugin 1.1.0 ignored that flag. A shopper could pick any result and only then get "That dealer is not currently selectable." This PR fixes that on the plugin side.
+- `/api/v1/search` with `acceptsTransfers=true` adds `f.accepts_transfers = true` to the query (`src/lib/ffl-search.ts`).
+- `ffls.accepts_transfers` defaults to `false`. ATF data does not say whether a dealer accepts transfers, so the ATF import does not set it.
+- Only two paths set it to `true`: an admin approving a dealer claim (`admin/ffl-claims/[id]/review`) and admin license verification (`admin/ffls/[id]/verification`). The seed script sets it only for sample Florida dealers.
+- So the filter returns only dealers FFL Bridge staff have reviewed. That is close to zero nationwide, and zero near 48047. ZIP 48047 is in the API's ZIP centroid table, so this is not a location lookup failure.
+- Even a transfer-accepting dealer is selectable at checkout only with a verified, unexpired license copy. The API's release audit reports zero such dealers in production.
+
+**Bottom line:** no plugin change can produce confirmed transfer dealers in Michigan. The plugin can only fail clearly, tell the merchant where coverage is missing, and, if the merchant opts in, offer unconfirmed nearby dealers. Real coverage needs API data and operations work (below).
+
+## What this PR does for the request
+
+**Zero results at checkout (classic and block)**
+
+- When no confirmed dealer is found, the shopper sees a specific message instead of an empty list or a generic error. For example: "No dealers within 100 miles of 48047 are confirmed to accept transfers."
+- It suggests a larger radius when one is available.
+- If selection is required, it says the order needs a dealer and to contact the store. If not, it says the order can still be placed and the store will arrange a dealer.
+- Merchants can change the wording with the `ffl_bridge_search_notice` filter. The output is sanitized to plain text.
+- An API `LOCATION_NOT_FOUND` error now shows "That ZIP code could not be located" instead of a generic failure.
+
+**Merchant coverage notice**
+
+- Each search without a confirmed dealer is logged by three-digit ZIP area (for example `480xx`), with count, largest radius, fallback count, last time, and any API reason. Entries are kept for 30 days, capped at 50 areas, and never linked to a shopper or order.
+- Users who can manage WooCommerce see a warning notice on the dashboard, Plugins, and WooCommerce screens. It links to a coverage table on the settings page. Each admin can dismiss it for a week, and it returns only if new gaps are recorded.
+- The settings connection test now takes any ZIP and radius. For 48047 at 100 miles it would report the count of transfer-accepting dealers (expected 0), the verified count, any API coverage count, and how many nearby listed dealers the fallback would offer.
+- The suggested privacy policy text now discloses the coverage log.
+
+**Optional fallback (off by default)**
+
+- Setting: **When no confirmed dealer is found**: "Show a message only (default)" or "Also offer nearby dealers labeled 'Transfer not confirmed'".
+- It applies only when the transfer-accepting search has no selectable dealer. If that search returned unverified transfer-accepting listings, those are offered. If it returned nothing, one unfiltered search (no `acceptsTransfers`) runs to find nearby ATF-listed active dealers. That extra API call happens only in the zero case.
+- Fallback dealers are labeled "Transfer not confirmed" and tell the shopper to contact the dealer. They can be selected.
+- The server still checks that the dealer exists, is active and ATF-listed, and matches the license number. A flag in the signed selection handle marks it as a fallback, so a shopper cannot turn an unconfirmed dealer into a confirmed one or the reverse.
+- The order records `_ffl_bridge_transfer_confirmed = no`, adds an order note saying FFL Bridge has not confirmed the transfer, and shows "Transfer not confirmed" in admin, the order list, emails, the thank-you page, and My Account.
+- If the merchant turns the fallback off while a shopper has a fallback dealer selected, checkout asks the shopper to choose a confirmed dealer.
+- Orders saved before this change have no flag and are treated as confirmed.
+
+**Optional API fields (read when present)**
+
+No API PR adds these yet. The plugin reads them under the names below, and ignores missing or malformed values:
+
+- `data.coverage.dealersInRadius`, `data.coverage.acceptingTransfers`, and `data.coverage.checkoutEligible`. Non-negative integers.
+- `data.zeroResultReason`. An upper-case code. The plugin has wording for `NO_DEALERS_IN_RADIUS`, `NO_TRANSFER_DEALERS_IN_RADIUS`, and `NO_VERIFIED_DEALERS_IN_RADIUS`. Other codes are recorded in the coverage table but not shown to shoppers.
+
+If the API PR picks different names, the plugin's `parse_search_meta()` needs a matching change.
+
+## API work needed in `ceweldy/ffl-bridge` for this request
+
+1. **Transfer acceptance data.** This is the real fix. Options include dealer outreach and self-service claims, importing acceptance data from partners, or a lighter "accepts transfers (unverified)" state separate from the verified checkout network.
+2. **Coverage metadata on search**, using the field names above or a documented equivalent. A cheap count of all listed dealers in the radius avoids a second search for the fallback decision and the admin message.
+3. **A merchant coverage endpoint** (counts by ZIP or state) so the settings page can show coverage without spending searches.
+4. **Fallback support in the order API.** `POST /orders` rejects unconfirmed dealers, which is fine while the plugin does not call it (see ask 3 below). If orders are registered later, unconfirmed selections need an explicit state.
+
+## Earlier assumed asks
+
+The sections below were written before the email arrived, when the asks were inferred: merchant preferred dealers, directory vs verified network, order status webhooks, and license sharing. They remain accurate as a gap analysis but are lower priority than the request above.
+
+Other assumptions from that draft:
+
+- "Preferred dealers" means a list owned by one merchant, not the global `ffls.is_preferred` flag.
+- "Pending verification" means a license copy uploaded or claimed but not yet approved.
+- License sharing direction was unknown, so both directions are covered.
+- Production numbers come from the API repo's `backend-release-contract.md` audit from early October 2026.
 
 ## Ask-by-ask review
 
@@ -129,6 +185,9 @@ Other assumptions:
 
 - New options `ffl_bridge_result_scope` (default `all`) and `ffl_bridge_preferred_licenses` (default empty). Existing sites need no migration and keep working without saving settings.
 - If the API omits `checkoutEligible`, every result stays selectable and is verified on selection, as in 1.1.0.
-- Search results cached by 1.1.0 (up to five minutes) have no network flag. They are treated as unknown until they expire.
-- The preferred list never leaves WordPress, so the privacy disclosure is unchanged.
+- Search results are cached under a new key, so results cached by 1.1.0 are not reused after the upgrade.
+- New options `ffl_bridge_fallback` (default `no`) and `ffl_bridge_coverage_log`, plus per-user meta `ffl_bridge_coverage_dismissed`. Uninstall removes all three.
+- New order meta `_ffl_bridge_transfer_confirmed`. Older orders without it are shown as confirmed.
+- `FFL_Bridge_API_Client::get_dealer()` gained an optional `$allow_unconfirmed` argument (default `false`, so existing behavior is unchanged), and `search()` is now a wrapper around `search_with_meta()`.
+- The preferred list never leaves WordPress. The coverage log is the only new stored shopper-derived data, and it is disclosed.
 - The unused `FFL_Bridge_API_Client::test_connection()` helper was removed. The settings connection test now calls `search()` directly with a larger sample.

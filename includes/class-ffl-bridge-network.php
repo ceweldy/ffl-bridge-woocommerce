@@ -21,10 +21,20 @@ final class FFL_Bridge_Network {
 	public const NETWORK_DIRECTORY = 'directory';
 	public const NETWORK_UNKNOWN   = 'unknown';
 
+	/**
+	 * A nearby listed dealer offered only by the merchant-enabled fallback.
+	 * FFL Bridge has not confirmed that it accepts transfers.
+	 */
+	public const NETWORK_UNCONFIRMED = 'unconfirmed';
+
 	public const SCOPE_ALL      = 'all';
 	public const SCOPE_VERIFIED = 'verified';
 
 	public const MAX_PREFERRED = 100;
+
+	public const OUTCOME_CONFIRMED = 'confirmed';
+	public const OUTCOME_FALLBACK  = 'fallback';
+	public const OUTCOME_NONE      = 'none';
 
 	/**
 	 * Return the configured result scope.
@@ -33,6 +43,25 @@ final class FFL_Bridge_Network {
 	 */
 	public static function get_result_scope(): string {
 		return self::sanitize_scope( get_option( 'ffl_bridge_result_scope', self::SCOPE_ALL ) );
+	}
+
+	/**
+	 * Determine whether the merchant enabled the unconfirmed-dealer fallback.
+	 *
+	 * @return bool
+	 */
+	public static function fallback_enabled(): bool {
+		return 'yes' === self::sanitize_fallback( get_option( 'ffl_bridge_fallback', 'no' ) );
+	}
+
+	/**
+	 * Sanitize the fallback setting. It is off unless explicitly enabled.
+	 *
+	 * @param mixed $input Raw value.
+	 * @return string
+	 */
+	public static function sanitize_fallback( mixed $input ): string {
+		return 'yes' === $input ? 'yes' : 'no';
 	}
 
 	/**
@@ -171,6 +200,105 @@ final class FFL_Bridge_Network {
 				return $dealer;
 			},
 			$prepared
+		);
+	}
+
+	/**
+	 * Determine whether prepared results include a dealer the shopper can
+	 * select without the fallback.
+	 *
+	 * @param array<int, array<string, mixed>> $prepared Prepared results.
+	 * @return bool
+	 */
+	public static function has_confirmed( array $prepared ): bool {
+		foreach ( $prepared as $dealer ) {
+			if ( ! empty( $dealer['selectable'] ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Mark nearby dealers as selectable fallback dealers whose transfer
+	 * acceptance is not confirmed.
+	 *
+	 * Verified network dealers keep their classification in case the API
+	 * returns one here. Store-preferred dealers lead, and the API order is
+	 * otherwise preserved.
+	 *
+	 * @param array<int, array<string, mixed>> $dealers Normalized dealers.
+	 * @param array<int, string>               $preferred Preferred license numbers.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function prepare_fallback( array $dealers, array $preferred ): array {
+		$prepared = self::prepare_results( $dealers, self::SCOPE_ALL, $preferred );
+		foreach ( $prepared as &$dealer ) {
+			if ( self::NETWORK_VERIFIED !== $dealer['network'] ) {
+				$dealer['network'] = self::NETWORK_UNCONFIRMED;
+			}
+			$dealer['selectable'] = true;
+		}
+		unset( $dealer );
+
+		usort(
+			$prepared,
+			static fn ( array $a, array $b ): int => (int) ! $a['store_preferred'] <=> (int) ! $b['store_preferred']
+		);
+
+		return $prepared;
+	}
+
+	/**
+	 * Decide which dealers a shopper sees for one search.
+	 *
+	 * Outcomes:
+	 * - confirmed: at least one dealer can be selected without the fallback.
+	 * - fallback: none could, the merchant enabled the fallback, and nearby
+	 *   listed dealers are offered with transfer acceptance unconfirmed.
+	 * - none: no dealer can be selected. Directory listings may still be
+	 *   shown, labeled and without a select button.
+	 *
+	 * The unfiltered search runs only when the fallback is enabled and the
+	 * transfer-accepting search returned nothing, so it costs no extra API
+	 * call in the common case.
+	 *
+	 * @param array<string, mixed> $primary Result of the transfer-accepting search.
+	 * @param callable|null        $fetch_nearby Returns an unfiltered search result or WP_Error.
+	 * @param string               $scope Result scope.
+	 * @param array<int, string>   $preferred Preferred license numbers.
+	 * @param bool                 $fallback Whether the fallback is enabled.
+	 * @return array{outcome: string, dealers: array<int, array<string, mixed>>}
+	 */
+	public static function resolve( array $primary, ?callable $fetch_nearby, string $scope, array $preferred, bool $fallback ): array {
+		$found    = is_array( $primary['dealers'] ?? null ) ? $primary['dealers'] : array();
+		$prepared = self::prepare_results( $found, $scope, $preferred );
+		if ( self::has_confirmed( $prepared ) ) {
+			return array(
+				'outcome' => self::OUTCOME_CONFIRMED,
+				'dealers' => $prepared,
+			);
+		}
+
+		if ( $fallback ) {
+			$candidates = $found;
+			if ( array() === $candidates && null !== $fetch_nearby ) {
+				$nearby     = $fetch_nearby();
+				$candidates = is_array( $nearby ) && is_array( $nearby['dealers'] ?? null ) ? $nearby['dealers'] : array();
+			}
+
+			if ( array() !== $candidates ) {
+				return array(
+					'outcome' => self::OUTCOME_FALLBACK,
+					'dealers' => self::prepare_fallback( $candidates, $preferred ),
+				);
+			}
+		}
+
+		return array(
+			'outcome' => self::OUTCOME_NONE,
+			'dealers' => $prepared,
 		);
 	}
 

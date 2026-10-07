@@ -63,9 +63,23 @@ final class FFL_Bridge_Order {
 			'phone'           => (string) $order->get_meta( $prefix . 'phone' ),
 			'license_on_file' => $legacy ? '' : (string) $order->get_meta( '_ffl_bridge_license_on_file' ),
 			'verified'        => $legacy ? '' : (string) $order->get_meta( '_ffl_bridge_license_verified' ),
+			'transfer'        => $legacy ? '' : (string) $order->get_meta( '_ffl_bridge_transfer_confirmed' ),
 			'verified_at'     => $legacy ? '' : (string) $order->get_meta( '_ffl_bridge_verified_at' ),
 			'source'          => $legacy ? 'legacy' : (string) $order->get_meta( '_ffl_bridge_source' ),
 		);
+	}
+
+	/**
+	 * Determine whether a stored selection is an unconfirmed fallback dealer.
+	 *
+	 * Orders saved before the fallback existed have no flag and were always
+	 * confirmed selections.
+	 *
+	 * @param array<string, string> $ffl Dealer values.
+	 * @return bool
+	 */
+	public static function is_unconfirmed( array $ffl ): bool {
+		return 'no' === ( $ffl['transfer'] ?? '' );
 	}
 
 	/**
@@ -101,6 +115,9 @@ final class FFL_Bridge_Order {
 				<?php endif; ?>
 				<strong><?php echo esc_html__( 'License:', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html( $ffl['license'] ); ?>
 			</p>
+			<?php if ( self::is_unconfirmed( $ffl ) ) : ?>
+				<p class="ffl-bridge-unconfirmed"><strong><?php echo esc_html__( 'Transfer not confirmed:', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html__( 'The shopper chose this dealer from the fallback list. FFL Bridge has not confirmed that it accepts transfers. Contact the dealer to confirm acceptance and get a license copy before shipping.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<?php endif; ?>
 			<?php if ( 'legacy' === $ffl['source'] ) : ?>
 				<p><strong><?php echo esc_html__( 'Legacy record:', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html__( 'This dealer was saved by an older plugin version and was not server-verified under the current workflow.', 'ffl-bridge-for-woocommerce' ); ?></p>
 			<?php else : ?>
@@ -154,6 +171,9 @@ final class FFL_Bridge_Order {
 				echo esc_html__( 'Phone:', 'ffl-bridge-for-woocommerce' ) . ' ' . esc_html( $ffl['phone'] ) . "\n";
 			}
 			echo esc_html__( 'License:', 'ffl-bridge-for-woocommerce' ) . ' ' . esc_html( $ffl['license'] ) . "\n";
+			if ( self::is_unconfirmed( $ffl ) ) {
+				echo esc_html__( 'Transfer not confirmed: this dealer has not been confirmed to accept transfers.', 'ffl-bridge-for-woocommerce' ) . "\n";
+			}
 			echo esc_html__( 'Contact the dealer to confirm acceptance, fees, and instructions.', 'ffl-bridge-for-woocommerce' ) . "\n";
 			return;
 		}
@@ -242,6 +262,9 @@ final class FFL_Bridge_Order {
 				<?php endif; ?>
 				<?php echo esc_html__( 'License:', 'ffl-bridge-for-woocommerce' ); ?> <?php echo esc_html( $ffl['license'] ); ?>
 			</address>
+			<?php if ( self::is_unconfirmed( $ffl ) ) : ?>
+				<p><strong><?php echo esc_html__( 'Transfer not confirmed:', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html__( 'this dealer has not been confirmed to accept transfers. Contact the dealer to confirm before the order ships.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<?php endif; ?>
 			<p><?php echo esc_html__( 'Contact the dealer to confirm current licensing, transfer acceptance, fees, and shipment instructions. Selection alone does not guarantee acceptance.', 'ffl-bridge-for-woocommerce' ); ?></p>
 		</section>
 		<?php
@@ -261,5 +284,8 @@ final class FFL_Bridge_Order {
 		}
 
 		echo '<span title="' . esc_attr( $ffl['license'] ) . '">' . esc_html( $ffl['name'] ) . '</span>';
+		if ( self::is_unconfirmed( $ffl ) ) {
+			echo '<br><em>' . esc_html__( 'Transfer not confirmed', 'ffl-bridge-for-woocommerce' ) . '</em>';
+		}
 	}
 }

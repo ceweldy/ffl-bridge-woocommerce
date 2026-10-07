@@ -97,6 +97,15 @@ final class FFL_Bridge_Settings {
 		);
 		register_setting(
 			'ffl_bridge_settings',
+			'ffl_bridge_fallback',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( 'FFL_Bridge_Network', 'sanitize_fallback' ),
+				'default'           => 'no',
+			)
+		);
+		register_setting(
+			'ffl_bridge_settings',
 			'ffl_bridge_preferred_licenses',
 			array(
 				'type'              => 'array',
@@ -257,36 +266,80 @@ final class FFL_Bridge_Settings {
 			wp_send_json_error( array( 'message' => esc_html__( 'The security token expired. Reload the page and try again.', 'ffl-bridge-for-woocommerce' ) ), 403 );
 		}
 
-		$result = FFL_Bridge_API_Client::search( self::SAMPLE_ZIP, self::SAMPLE_RADIUS, 25 );
-		if ( is_wp_error( $result ) ) {
-			wp_send_json_error( array( 'message' => $result->get_error_message() ), 400 );
+		$zip    = isset( $_POST['zip'] ) ? sanitize_text_field( wp_unslash( $_POST['zip'] ) ) : '';
+		$radius = isset( $_POST['radius'] ) ? absint( wp_unslash( $_POST['radius'] ) ) : 0;
+		$zip    = '' === $zip ? self::SAMPLE_ZIP : $zip;
+		$radius = in_array( $radius, FFL_Bridge_API_Client::ALLOWED_RADII, true ) ? $radius : self::SAMPLE_RADIUS;
+
+		$transfer = FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 25 );
+		if ( is_wp_error( $transfer ) ) {
+			wp_send_json_error( array( 'message' => $transfer->get_error_message() ), 400 );
 		}
 
-		wp_send_json_success( array( 'message' => self::connection_summary( FFL_Bridge_Network::count_by_network( $result ), count( $result ) ) ) );
+		// Only count the unfiltered directory when no confirmed dealer exists,
+		// which is when the fallback setting would matter.
+		$nearby   = null;
+		$prepared = FFL_Bridge_Network::prepare_results( $transfer['dealers'], FFL_Bridge_Network::SCOPE_ALL, array() );
+		if ( ! FFL_Bridge_Network::has_confirmed( $prepared ) ) {
+			$all    = FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 25, false );
+			$nearby = is_wp_error( $all ) ? null : count( $all['dealers'] );
+		}
+
+		wp_send_json_success( array( 'message' => self::connection_summary( $zip, $radius, $transfer, $nearby ) ) );
 	}
 
 	/**
-	 * Describe a sample search so the merchant can see how much of the public
-	 * directory is in the verified checkout network.
+	 * Describe a coverage check so the merchant can see how many dealers near
+	 * a ZIP code accept transfers and how many are in the verified network.
 	 *
-	 * @param array{verified: int, directory: int, unknown: int} $counts Network counts.
-	 * @param int                                                $total Result count.
+	 * @param string               $zip Checked ZIP code.
+	 * @param int                  $radius Checked radius.
+	 * @param array<string, mixed> $transfer Transfer-accepting search result with metadata.
+	 * @param int|null             $nearby Unfiltered result count, when it was checked.
 	 * @return string
 	 */
-	public static function connection_summary( array $counts, int $total ): string {
-		$message = __( 'Connection successful.', 'ffl-bridge-for-woocommerce' );
+	public static function connection_summary( string $zip, int $radius, array $transfer, ?int $nearby ): string {
+		$dealers = $transfer['dealers'];
+		$counts  = FFL_Bridge_Network::count_by_network( $dealers );
+		$parts   = array( __( 'Connection successful.', 'ffl-bridge-for-woocommerce' ) );
+
 		if ( $counts[ FFL_Bridge_Network::NETWORK_UNKNOWN ] > 0 ) {
-			return $message . ' ' . __( 'The API did not report checkout-network status, so each dealer is checked when the shopper selects it.', 'ffl-bridge-for-woocommerce' );
+			$parts[] = sprintf(
+				/* translators: 1: ZIP code, 2: radius in miles, 3: result count. */
+				__( 'Within %2$d miles of %1$s: %3$d dealers listed as accepting transfers. The API did not report checkout-network status, so each dealer is checked when the shopper selects it.', 'ffl-bridge-for-woocommerce' ),
+				$zip,
+				$radius,
+				count( $dealers )
+			);
+		} else {
+			$parts[] = sprintf(
+				/* translators: 1: ZIP code, 2: radius in miles, 3: transfer-accepting result count, 4: verified checkout network count. */
+				__( 'Within %2$d miles of %1$s: %3$d dealers listed as accepting transfers, %4$d in the verified checkout network.', 'ffl-bridge-for-woocommerce' ),
+				$zip,
+				$radius,
+				count( $dealers ),
+				$counts[ FFL_Bridge_Network::NETWORK_VERIFIED ]
+			);
 		}
 
-		return $message . ' ' . sprintf(
-			/* translators: 1: sample ZIP code, 2: radius in miles, 3: directory result count, 4: verified checkout network count. */
-			__( 'Sample search near %1$s within %2$d miles: %3$d directory listings, %4$d in the verified checkout network.', 'ffl-bridge-for-woocommerce' ),
-			self::SAMPLE_ZIP,
-			self::SAMPLE_RADIUS,
-			$total,
-			$counts[ FFL_Bridge_Network::NETWORK_VERIFIED ]
-		);
+		$coverage = $transfer['coverage'] ?? null;
+		if ( is_array( $coverage ) && isset( $coverage['dealers_in_radius'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %d: number of licensed dealers in the area. */
+				__( 'FFL Bridge reports %d licensed dealers in this area.', 'ffl-bridge-for-woocommerce' ),
+				$coverage['dealers_in_radius']
+			);
+		}
+
+		if ( null !== $nearby ) {
+			$parts[] = sprintf(
+				/* translators: %d: number of nearby listed dealers. */
+				__( 'Shoppers here cannot select a confirmed dealer. %d nearby listed dealers could be offered as unconfirmed if you turn on the fallback.', 'ffl-bridge-for-woocommerce' ),
+				$nearby
+			);
+		}
+
+		return implode( ' ', $parts );
 	}
 
 	/**
@@ -304,6 +357,8 @@ final class FFL_Bridge_Settings {
 		$selected_categories = self::sanitize_categories( get_option( 'ffl_bridge_categories', array() ) );
 		$result_scope        = FFL_Bridge_Network::get_result_scope();
 		$preferred_licenses  = FFL_Bridge_Network::get_preferred_licenses();
+		$fallback            = FFL_Bridge_Network::fallback_enabled() ? 'yes' : 'no';
+		$coverage_log        = FFL_Bridge_Coverage::get_log();
 		$constant_key        = defined( 'FFL_BRIDGE_API_KEY' );
 		$key_suffix          = FFL_Bridge_API_Client::get_key_suffix();
 		$categories          = get_terms(
@@ -379,6 +434,16 @@ final class FFL_Bridge_Settings {
 						</td>
 					</tr>
 					<tr>
+						<th scope="row"><label for="ffl_bridge_fallback"><?php echo esc_html__( 'When no confirmed dealer is found', 'ffl-bridge-for-woocommerce' ); ?></label></th>
+						<td>
+							<select id="ffl_bridge_fallback" name="ffl_bridge_fallback">
+								<option value="no" <?php selected( $fallback, 'no' ); ?>><?php echo esc_html__( 'Show a message only (default)', 'ffl-bridge-for-woocommerce' ); ?></option>
+								<option value="yes" <?php selected( $fallback, 'yes' ); ?>><?php echo esc_html__( 'Also offer nearby dealers labeled "Transfer not confirmed"', 'ffl-bridge-for-woocommerce' ); ?></option>
+							</select>
+							<p class="description"><?php echo esc_html__( 'Off by default. When on, and a search finds no dealer confirmed to accept transfers, shoppers can choose a nearby ATF-listed dealer. Each one is labeled "Transfer not confirmed" and tells the shopper to contact the dealer. The order is marked "Transfer not confirmed" so staff confirm acceptance and get a license copy before shipping. This uses one extra search only when the first search finds nothing.', 'ffl-bridge-for-woocommerce' ); ?></p>
+						</td>
+					</tr>
+					<tr>
 						<th scope="row"><label for="ffl_bridge_preferred_licenses"><?php echo esc_html__( 'Store preferred dealers', 'ffl-bridge-for-woocommerce' ); ?></label></th>
 						<td>
 							<textarea id="ffl_bridge_preferred_licenses" name="ffl_bridge_preferred_licenses" rows="5" cols="40" class="code" spellcheck="false"><?php echo esc_textarea( implode( "\n", $preferred_licenses ) ); ?></textarea>
@@ -419,12 +484,61 @@ final class FFL_Bridge_Settings {
 			</form>
 
 			<hr>
-			<h2><?php echo esc_html__( 'Connection test', 'ffl-bridge-for-woocommerce' ); ?></h2>
-			<p><?php echo esc_html__( 'Save changes before testing. The request is made by your WordPress server; the key is not returned to this page. The test runs one sample search and reports how many results are in the verified checkout network.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<h2><?php echo esc_html__( 'Connection and coverage check', 'ffl-bridge-for-woocommerce' ); ?></h2>
+			<p><?php echo esc_html__( 'Save changes before testing. The request is made by your WordPress server; the key is not returned to this page. Enter a ZIP code your customers use to see how many nearby dealers accept transfers and how many are in the verified checkout network.', 'ffl-bridge-for-woocommerce' ); ?></p>
 			<p>
-				<button type="button" class="button" id="ffl-bridge-test" <?php disabled( ! FFL_Bridge_API_Client::is_configured() ); ?>><?php echo esc_html__( 'Test saved connection', 'ffl-bridge-for-woocommerce' ); ?></button>
-				<span id="ffl-bridge-test-result" role="status" aria-live="polite"></span>
+				<label for="ffl-bridge-test-zip"><?php echo esc_html__( 'ZIP code', 'ffl-bridge-for-woocommerce' ); ?></label>
+				<input type="text" id="ffl-bridge-test-zip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" size="6" placeholder="<?php echo esc_attr( self::SAMPLE_ZIP ); ?>">
+				<label for="ffl-bridge-test-radius"><?php echo esc_html__( 'Radius', 'ffl-bridge-for-woocommerce' ); ?></label>
+				<select id="ffl-bridge-test-radius">
+					<?php foreach ( FFL_Bridge_API_Client::ALLOWED_RADII as $miles ) : ?>
+						<option value="<?php echo esc_attr( (string) $miles ); ?>" <?php selected( $miles, self::SAMPLE_RADIUS ); ?>>
+							<?php
+							/* translators: %d: radius in miles. */
+							echo esc_html( sprintf( __( '%d miles', 'ffl-bridge-for-woocommerce' ), $miles ) );
+							?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+				<button type="button" class="button" id="ffl-bridge-test" <?php disabled( ! FFL_Bridge_API_Client::is_configured() ); ?>><?php echo esc_html__( 'Test connection and coverage', 'ffl-bridge-for-woocommerce' ); ?></button>
 			</p>
+			<p><span id="ffl-bridge-test-result" role="status" aria-live="polite"></span></p>
+
+			<h2 id="ffl-bridge-coverage"><?php echo esc_html__( 'Coverage gaps from shopper searches', 'ffl-bridge-for-woocommerce' ); ?></h2>
+			<p><?php echo esc_html__( 'Searches in the last 30 days that found no dealer confirmed to accept transfers. Only the first three digits of the ZIP code are kept.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<?php if ( empty( $coverage_log['areas'] ) ) : ?>
+				<p><?php echo esc_html__( 'No coverage gaps recorded.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<?php else : ?>
+				<table class="widefat striped ffl-bridge-coverage-table">
+					<thead>
+						<tr>
+							<th scope="col"><?php echo esc_html__( 'ZIP area', 'ffl-bridge-for-woocommerce' ); ?></th>
+							<th scope="col"><?php echo esc_html__( 'Searches without a confirmed dealer', 'ffl-bridge-for-woocommerce' ); ?></th>
+							<th scope="col"><?php echo esc_html__( 'Fallback dealers shown', 'ffl-bridge-for-woocommerce' ); ?></th>
+							<th scope="col"><?php echo esc_html__( 'Largest radius searched', 'ffl-bridge-for-woocommerce' ); ?></th>
+							<th scope="col"><?php echo esc_html__( 'Last search', 'ffl-bridge-for-woocommerce' ); ?></th>
+							<th scope="col"><?php echo esc_html__( 'API reason', 'ffl-bridge-for-woocommerce' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php foreach ( $coverage_log['areas'] as $area => $entry ) : ?>
+							<tr>
+								<td><?php echo esc_html( $area . 'xx' ); ?></td>
+								<td><?php echo esc_html( number_format_i18n( $entry['count'] ) ); ?></td>
+								<td><?php echo esc_html( number_format_i18n( $entry['fallback'] ) ); ?></td>
+								<td>
+									<?php
+									/* translators: %d: radius in miles. */
+									echo esc_html( sprintf( __( '%d miles', 'ffl-bridge-for-woocommerce' ), $entry['max_radius'] ) );
+									?>
+								</td>
+								<td><?php echo esc_html( wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $entry['last'] ) ); ?></td>
+								<td><?php echo esc_html( '' !== $entry['reason'] ? $entry['reason'] : __( 'Not reported', 'ffl-bridge-for-woocommerce' ) ); ?></td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+			<?php endif; ?>
 		</div>
 		<?php
 	}

@@ -79,6 +79,23 @@ final class OrderMetadataTest extends FFL_Bridge_TestCase {
 		$this->assertNotSame( 'legacy', $data['source'] );
 	}
 
+	public function test_transfer_confirmation_flag_is_read_and_defaults_to_confirmed(): void {
+		$unconfirmed = FFL_Bridge_Order::get_ffl_data(
+			new WC_Order(
+				array(
+					'_ffl_bridge_license'            => '1-23-456-78-9A-01234',
+					'_ffl_bridge_transfer_confirmed' => 'no',
+				)
+			)
+		);
+		$older       = FFL_Bridge_Order::get_ffl_data( new WC_Order( array( '_ffl_bridge_license' => '1-23-456-78-9A-01234' ) ) );
+		$legacy      = FFL_Bridge_Order::get_ffl_data( new WC_Order( array( '_ffl_license' => '1-23-456-78-9A-01234' ) ) );
+
+		$this->assertTrue( FFL_Bridge_Order::is_unconfirmed( $unconfirmed ) );
+		$this->assertFalse( FFL_Bridge_Order::is_unconfirmed( $older ) );
+		$this->assertFalse( FFL_Bridge_Order::is_unconfirmed( $legacy ) );
+	}
+
 	public function test_order_without_any_license_has_no_ffl_data(): void {
 		$this->assertNull( FFL_Bridge_Order::get_ffl_data( new WC_Order() ) );
 		$this->assertNull( FFL_Bridge_Order::get_ffl_data( false ) );
