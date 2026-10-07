@@ -66,6 +66,10 @@ final class FFL_Bridge_API_Client {
 	/**
 	 * Search for active dealers by ZIP code.
 	 *
+	 * Results come from the public directory. Each normalized dealer carries
+	 * checkout_eligible: true for the verified checkout network, false for a
+	 * directory-only listing, and null when the API did not report the flag.
+	 *
 	 * @param string $zip ZIP code.
 	 * @param int    $radius Search radius in miles.
 	 * @param int    $limit Maximum result count.
@@ -158,19 +162,10 @@ final class FFL_Bridge_API_Client {
 			return new WP_Error( 'ffl_bridge_dealer_unavailable', __( 'That dealer is not currently selectable. Choose another dealer or contact the store.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		$dealer['license_on_file']  = true === ( $eligibility['licenseOnFile'] ?? false );
-		$dealer['license_verified'] = true;
+		$dealer['license_on_file']   = true === ( $eligibility['licenseOnFile'] ?? false );
+		$dealer['license_verified']  = true;
+		$dealer['checkout_eligible'] = true;
 		return $dealer;
-	}
-
-	/**
-	 * Verify that the configured credential can reach the API.
-	 *
-	 * @return true|WP_Error
-	 */
-	public static function test_connection(): bool|WP_Error {
-		$result = self::search( '32174', 10, 1 );
-		return is_wp_error( $result ) ? $result : true;
 	}
 
 	/**
@@ -222,6 +217,7 @@ final class FFL_Bridge_API_Client {
 			'distance'          => $distance,
 			'accepts_transfers' => true === ( $raw['acceptsTransfers'] ?? false ),
 			'is_active'         => ! array_key_exists( 'isActive', $raw ) || true === $raw['isActive'],
+			'checkout_eligible' => array_key_exists( 'checkoutEligible', $raw ) ? true === $raw['checkoutEligible'] : null,
 		);
 	}
 

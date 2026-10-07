@@ -100,3 +100,45 @@
 		grid-template-columns: 1fr;
 	}
 }
+
+.ffl-bridge-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+}
+
+.ffl-bridge-badge {
+	display: inline-block;
+	padding: 0.1rem 0.5rem;
+	border: 1px solid currentColor;
+	border-radius: 999px;
+	font-size: 0.8em;
+	line-height: 1.5;
+}
+
+.ffl-bridge-badge.is-verified {
+	color: #00703c;
+}
+
+.ffl-bridge-badge.is-preferred {
+	color: #2c3338;
+	font-weight: 600;
+}
+
+.ffl-bridge-badge.is-directory {
+	color: #646970;
+}
+
+.ffl-bridge-directory-note {
+	margin: 0.25rem 0 0;
+	font-size: 0.9em;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-badge.is-verified {
+	color: #68de7c;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-badge.is-preferred,
+.ffl-bridge-theme-dark .ffl-bridge-badge.is-directory {
+	color: #dcdcde;
+}

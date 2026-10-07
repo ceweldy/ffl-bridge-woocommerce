@@ -15,6 +15,7 @@ $GLOBALS['ffl_bridge_test_term_map']   = array();
 $GLOBALS['ffl_bridge_test_wc']         = null;
 $GLOBALS['ffl_bridge_test_home_url']   = 'https://store.example.test/';
 $GLOBALS['ffl_bridge_test_transients'] = array();
+$GLOBALS['ffl_bridge_test_settings_errors'] = array();
 
 /** Minimal WordPress error object used by the runtime. */
 class WP_Error {
@@ -152,6 +153,18 @@ function sanitize_text_field( mixed $value ): string {
 	return trim( (string) $value );
 }
 
+function sanitize_textarea_field( mixed $value ): string {
+	return is_scalar( $value ) ? trim( strip_tags( (string) $value ) ) : '';
+}
+
+function wp_unslash( mixed $value ): mixed {
+	return is_string( $value ) ? stripslashes( $value ) : $value;
+}
+
+function add_settings_error( string $setting, string $code, string $message, string $type = 'error' ): void {
+	$GLOBALS['ffl_bridge_test_settings_errors'][] = array( $setting, $code, $type );
+}
+
 function absint( mixed $value ): int {
 	return abs( (int) $value );
 }
@@ -186,7 +199,9 @@ function set_transient( string $key, mixed $value, int $expiration ): bool {
 }
 
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-api-client.php';
+require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-network.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-selection.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-checkout.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-order.php';
+require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-settings.php';
 require_once __DIR__ . '/TestCase.php';

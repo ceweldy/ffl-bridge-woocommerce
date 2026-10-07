@@ -179,6 +179,11 @@ final class FFL_Bridge_Checkout {
 				'selectedTitle' => esc_html__( 'Selected transfer dealer', 'ffl-bridge-for-woocommerce' ),
 				'confirmNotice' => esc_html__( 'Selection does not guarantee that the dealer will accept this transfer. Contact the dealer before the order ships.', 'ffl-bridge-for-woocommerce' ),
 				'miles'         => esc_html__( 'miles away', 'ffl-bridge-for-woocommerce' ),
+				'verifiedBadge' => esc_html__( 'Verified checkout network', 'ffl-bridge-for-woocommerce' ),
+				'directoryOnly' => esc_html__( 'Directory listing only', 'ffl-bridge-for-woocommerce' ),
+				'directoryNote' => esc_html__( 'This dealer is listed in the public FFL directory but is not yet verified for checkout, so it cannot be selected here.', 'ffl-bridge-for-woocommerce' ),
+				'preferred'     => esc_html__( 'Store preferred dealer', 'ffl-bridge-for-woocommerce' ),
+				'noVerified'    => esc_html__( 'No dealers in this area are in the verified checkout network yet. Try a larger radius or contact the store.', 'ffl-bridge-for-woocommerce' ),
 			),
 		);
 	}
@@ -210,19 +215,32 @@ final class FFL_Bridge_Checkout {
 			self::send_ajax_error( $result );
 		}
 
-		$dealers = array();
-		foreach ( $result as $dealer ) {
-			$token = FFL_Bridge_Selection::create( $dealer );
-			if ( is_wp_error( $token ) ) {
-				continue;
+		$prepared = FFL_Bridge_Network::prepare_results( $result, FFL_Bridge_Network::get_result_scope(), FFL_Bridge_Network::get_preferred_licenses() );
+		$dealers  = array();
+		foreach ( $prepared as $dealer ) {
+			$public = self::public_dealer( $dealer );
+
+			// Directory-only listings never receive a selection handle, because
+			// FFL Bridge rejects them when the selection is re-verified.
+			if ( $dealer['selectable'] ) {
+				$token = FFL_Bridge_Selection::create( $dealer );
+				if ( is_wp_error( $token ) ) {
+					continue;
+				}
+				$public['selectionToken'] = $token;
 			}
 
-			$public                   = self::public_dealer( $dealer );
-			$public['selectionToken'] = $token;
+			$public['network']        = $dealer['network'];
+			$public['storePreferred'] = $dealer['store_preferred'];
 			$dealers[]                = $public;
 		}
 
-		wp_send_json_success( array( 'dealers' => $dealers ) );
+		wp_send_json_success(
+			array(
+				'dealers'     => $dealers,
+				'hiddenCount' => count( $result ) - count( $prepared ),
+			)
+		);
 	}
 
 	/**

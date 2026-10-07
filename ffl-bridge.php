@@ -68,6 +68,7 @@ function ffl_bridge_init(): void {
 	}
 
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-api-client.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-network.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-selection.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-settings.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-checkout.php';
@@ -91,6 +92,8 @@ function ffl_bridge_activate(): void {
 	add_option( 'ffl_bridge_theme', 'light', '', false );
 	add_option( 'ffl_bridge_required', 'yes', '', false );
 	add_option( 'ffl_bridge_categories', array(), '', false );
+	add_option( 'ffl_bridge_result_scope', 'all', '', false );
+	add_option( 'ffl_bridge_preferred_licenses', array(), '', false );
 	add_option( 'ffl_bridge_settings_version', FFL_BRIDGE_VERSION, '', false );
 }
 register_activation_hook( __FILE__, 'ffl_bridge_activate' );

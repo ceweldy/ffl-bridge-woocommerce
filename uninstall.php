@@ -14,4 +14,6 @@ delete_option( 'ffl_bridge_api_key' );
 delete_option( 'ffl_bridge_theme' );
 delete_option( 'ffl_bridge_required' );
 delete_option( 'ffl_bridge_categories' );
+delete_option( 'ffl_bridge_result_scope' );
+delete_option( 'ffl_bridge_preferred_licenses' );
 delete_option( 'ffl_bridge_settings_version' );

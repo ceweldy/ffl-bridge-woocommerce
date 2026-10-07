@@ -6,6 +6,7 @@ FFL Bridge for WooCommerce adds server-verified FFL dealer selection to WooComme
 
 - Supports both classic WooCommerce checkout and the WooCommerce Checkout Block.
 - Searches the FFL Bridge service by ZIP code and radius without exposing the merchant API key to the shopper's browser.
+- Labels each result as part of the verified checkout network or as a public directory listing. Only verified network dealers can be selected. Merchants can hide directory listings and mark their own preferred dealers.
 - Retrieves the selected dealer from FFL Bridge on the server before saving a canonical, allowlisted record to the order.
 - Can require selection for all products or only configured WooCommerce product categories.
 - Displays stored dealer details in WooCommerce order administration, order emails, confirmation pages, and customer order details.

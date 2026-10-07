@@ -20,6 +20,8 @@ Features:
 * Classic checkout and WooCommerce Checkout Block support
 * Server-side use of the FFL Bridge API key
 * Search by five-digit ZIP code and supported radius
+* Clear labels for the verified checkout network and public directory listings, which cannot be selected
+* Optional store preferred dealer list, kept in WordPress
 * Required or optional selection for all products or configured categories
 * Dealer details in order administration, order emails, confirmation pages, and customer order details
 * WooCommerce High-Performance Order Storage compatibility
@@ -65,6 +67,10 @@ Version 1.0.x sent the API key to the checkout browser. Revoke any key that was 
 = Does the plugin support the Checkout Block? =
 
 Yes. Version 1.1.0 supports both classic WooCommerce checkout and the WooCommerce Checkout Block.
+
+= Why can some dealers not be selected? =
+
+Search covers the public FFL directory. Only dealers in the FFL Bridge verified checkout network can be selected, because they have a current, verified license copy on file and accept transfers. Other dealers are labeled "Directory listing only". The settings page can hide them, and its connection test shows how many dealers near a sample ZIP code are in the verified network.
 
 = Does selecting a dealer change the shipping destination? =
 

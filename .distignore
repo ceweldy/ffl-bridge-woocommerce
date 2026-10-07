@@ -13,6 +13,7 @@ bin/***
 composer.json
 composer.lock
 dist/***
+docs/***
 node_modules/***
 package.json
 package-lock.json

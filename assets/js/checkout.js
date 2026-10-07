@@ -62,6 +62,21 @@
 		}
 	}
 
+	function appendBadges( container, dealer, config ) {
+		var badges = element( 'span', 'ffl-bridge-badges' );
+		if ( dealer.storePreferred ) {
+			badges.appendChild( element( 'span', 'ffl-bridge-badge is-preferred', message( config, 'preferred', 'Store preferred dealer' ) ) );
+		}
+		if ( dealer.network === 'verified' ) {
+			badges.appendChild( element( 'span', 'ffl-bridge-badge is-verified', message( config, 'verifiedBadge', 'Verified checkout network' ) ) );
+		} else if ( dealer.network === 'directory' ) {
+			badges.appendChild( element( 'span', 'ffl-bridge-badge is-directory', message( config, 'directoryOnly', 'Directory listing only' ) ) );
+		}
+		if ( badges.childNodes.length ) {
+			container.appendChild( badges );
+		}
+	}
+
 	function mount( root, suppliedConfig ) {
 		if ( ! root || root.dataset.fflBridgeMounted === 'true' ) {
 			return;
@@ -159,16 +174,31 @@
 			var results = element( 'div', 'ffl-bridge-results' );
 			results.setAttribute( 'aria-live', 'polite' );
 
-			function renderResults( dealers ) {
+			function renderResults( dealers, hiddenCount ) {
 				results.replaceChildren();
-				if ( ! dealers.length ) {
+				var anySelectable = dealers.some( function ( dealer ) {
+					return !! dealer.selectionToken;
+				} );
+
+				if ( ! anySelectable && ( dealers.length || hiddenCount > 0 ) ) {
+					results.appendChild( element( 'p', 'ffl-bridge-empty', message( config, 'noVerified', 'No dealers in this area are in the verified checkout network yet.' ) ) );
+				} else if ( ! dealers.length ) {
 					results.appendChild( element( 'p', 'ffl-bridge-empty', message( config, 'noResults', 'No eligible dealers were found in that area.' ) ) );
 					return;
 				}
 
 				dealers.forEach( function ( dealer ) {
 					var card = element( 'article', 'ffl-bridge-result' );
+					appendBadges( card, dealer, config );
 					appendDealerDetails( card, dealer, true, config );
+
+					if ( ! dealer.selectionToken ) {
+						card.classList.add( 'is-directory-only' );
+						card.appendChild( element( 'p', 'ffl-bridge-directory-note', message( config, 'directoryNote', 'This dealer is not yet verified for checkout.' ) ) );
+						results.appendChild( card );
+						return;
+					}
+
 					var selectButton = element( 'button', 'button ffl-bridge-select', message( config, 'select', 'Select dealer' ) );
 					selectButton.type = 'button';
 					selectButton.addEventListener( 'click', function () {
@@ -206,7 +236,7 @@
 				request( config, 'ffl_bridge_search', { zip: zip.value, radius: radius.value } )
 					.then( function ( data ) {
 						setStatus( '', '' );
-						renderResults( Array.isArray( data.dealers ) ? data.dealers : [] );
+						renderResults( Array.isArray( data.dealers ) ? data.dealers : [], Number( data.hiddenCount ) || 0 );
 					} )
 					.catch( function ( error ) {
 						setStatus( error.message, 'error' );

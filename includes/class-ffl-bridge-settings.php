@@ -12,7 +12,9 @@ defined( 'ABSPATH' ) || exit;
  */
 final class FFL_Bridge_Settings {
 
-	private const PAGE_SLUG = 'ffl-bridge-settings';
+	private const PAGE_SLUG     = 'ffl-bridge-settings';
+	private const SAMPLE_ZIP    = '32174';
+	private const SAMPLE_RADIUS = 25;
 
 	/**
 	 * Register hooks.
@@ -84,6 +86,24 @@ final class FFL_Bridge_Settings {
 				'default'           => array(),
 			)
 		);
+		register_setting(
+			'ffl_bridge_settings',
+			'ffl_bridge_result_scope',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( 'FFL_Bridge_Network', 'sanitize_scope' ),
+				'default'           => FFL_Bridge_Network::SCOPE_ALL,
+			)
+		);
+		register_setting(
+			'ffl_bridge_settings',
+			'ffl_bridge_preferred_licenses',
+			array(
+				'type'              => 'array',
+				'sanitize_callback' => array( __CLASS__, 'sanitize_preferred_licenses' ),
+				'default'           => array(),
+			)
+		);
 	}
 
 	/**
@@ -142,6 +162,29 @@ final class FFL_Bridge_Settings {
 	 */
 	public static function sanitize_required( mixed $input ): string {
 		return 'no' === $input ? 'no' : 'yes';
+	}
+
+	/**
+	 * Sanitize the merchant's preferred dealer license numbers.
+	 *
+	 * @param mixed $input Submitted textarea value or stored list.
+	 * @return array<int, string>
+	 */
+	public static function sanitize_preferred_licenses( mixed $input ): array {
+		$raw      = is_string( $input ) ? sanitize_textarea_field( wp_unslash( $input ) ) : $input;
+		$licenses = FFL_Bridge_Network::parse_license_list( $raw );
+
+		$entered = is_string( $raw ) ? count( array_filter( (array) preg_split( '/[\s,;]+/', $raw ) ) ) : 0;
+		if ( $entered > count( $licenses ) ) {
+			add_settings_error(
+				'ffl_bridge_preferred_licenses',
+				'ffl_bridge_invalid_preferred_licenses',
+				esc_html__( 'Some preferred dealer entries were removed because they were duplicates, over the limit, or not valid FFL license numbers.', 'ffl-bridge-for-woocommerce' ),
+				'warning'
+			);
+		}
+
+		return $licenses;
 	}
 
 	/**
@@ -214,12 +257,36 @@ final class FFL_Bridge_Settings {
 			wp_send_json_error( array( 'message' => esc_html__( 'The security token expired. Reload the page and try again.', 'ffl-bridge-for-woocommerce' ) ), 403 );
 		}
 
-		$result = FFL_Bridge_API_Client::test_connection();
+		$result = FFL_Bridge_API_Client::search( self::SAMPLE_ZIP, self::SAMPLE_RADIUS, 25 );
 		if ( is_wp_error( $result ) ) {
 			wp_send_json_error( array( 'message' => $result->get_error_message() ), 400 );
 		}
 
-		wp_send_json_success( array( 'message' => esc_html__( 'Connection successful.', 'ffl-bridge-for-woocommerce' ) ) );
+		wp_send_json_success( array( 'message' => self::connection_summary( FFL_Bridge_Network::count_by_network( $result ), count( $result ) ) ) );
+	}
+
+	/**
+	 * Describe a sample search so the merchant can see how much of the public
+	 * directory is in the verified checkout network.
+	 *
+	 * @param array{verified: int, directory: int, unknown: int} $counts Network counts.
+	 * @param int                                                $total Result count.
+	 * @return string
+	 */
+	public static function connection_summary( array $counts, int $total ): string {
+		$message = __( 'Connection successful.', 'ffl-bridge-for-woocommerce' );
+		if ( $counts[ FFL_Bridge_Network::NETWORK_UNKNOWN ] > 0 ) {
+			return $message . ' ' . __( 'The API did not report checkout-network status, so each dealer is checked when the shopper selects it.', 'ffl-bridge-for-woocommerce' );
+		}
+
+		return $message . ' ' . sprintf(
+			/* translators: 1: sample ZIP code, 2: radius in miles, 3: directory result count, 4: verified checkout network count. */
+			__( 'Sample search near %1$s within %2$d miles: %3$d directory listings, %4$d in the verified checkout network.', 'ffl-bridge-for-woocommerce' ),
+			self::SAMPLE_ZIP,
+			self::SAMPLE_RADIUS,
+			$total,
+			$counts[ FFL_Bridge_Network::NETWORK_VERIFIED ]
+		);
 	}
 
 	/**
@@ -235,6 +302,8 @@ final class FFL_Bridge_Settings {
 		$theme               = self::sanitize_theme( get_option( 'ffl_bridge_theme', 'light' ) );
 		$required            = self::sanitize_required( get_option( 'ffl_bridge_required', 'yes' ) );
 		$selected_categories = self::sanitize_categories( get_option( 'ffl_bridge_categories', array() ) );
+		$result_scope        = FFL_Bridge_Network::get_result_scope();
+		$preferred_licenses  = FFL_Bridge_Network::get_preferred_licenses();
 		$constant_key        = defined( 'FFL_BRIDGE_API_KEY' );
 		$key_suffix          = FFL_Bridge_API_Client::get_key_suffix();
 		$categories          = get_terms(
@@ -247,6 +316,8 @@ final class FFL_Bridge_Settings {
 		<div class="wrap">
 			<h1><?php echo esc_html__( 'FFL Bridge Settings', 'ffl-bridge-for-woocommerce' ); ?></h1>
 			<p><?php echo esc_html__( 'FFL Bridge records a server-verified transfer-dealer selection on the WooCommerce order. It does not change the shipping address or replace merchant compliance checks.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<h2><?php echo esc_html__( 'Public directory and verified checkout network', 'ffl-bridge-for-woocommerce' ); ?></h2>
+			<p><?php echo esc_html__( 'Dealer search covers the public FFL directory, built from ATF listings (roughly 77,000 active licenses). Only dealers in the verified checkout network can be selected at checkout. A dealer joins that network when FFL Bridge has a current, verified license copy on file and the dealer accepts transfers. Directory-only dealers can be shown for reference but cannot be selected.', 'ffl-bridge-for-woocommerce' ); ?></p>
 
 			<?php settings_errors(); ?>
 			<form method="post" action="options.php">
@@ -291,10 +362,37 @@ final class FFL_Bridge_Settings {
 						<th scope="row"><label for="ffl_bridge_required"><?php echo esc_html__( 'Require a selection', 'ffl-bridge-for-woocommerce' ); ?></label></th>
 						<td>
 							<select id="ffl_bridge_required" name="ffl_bridge_required">
-								<option value="yes" <?php selected( $required, 'yes' ); ?>><?php echo esc_html__( 'Yes — block checkout', 'ffl-bridge-for-woocommerce' ); ?></option>
-								<option value="no" <?php selected( $required, 'no' ); ?>><?php echo esc_html__( 'No — selection is optional', 'ffl-bridge-for-woocommerce' ); ?></option>
+								<option value="yes" <?php selected( $required, 'yes' ); ?>><?php echo esc_html__( 'Yes, block checkout', 'ffl-bridge-for-woocommerce' ); ?></option>
+								<option value="no" <?php selected( $required, 'no' ); ?>><?php echo esc_html__( 'No, selection is optional', 'ffl-bridge-for-woocommerce' ); ?></option>
 							</select>
-							<p class="description"><?php echo esc_html__( 'A required checkout fails closed if the API is unavailable or the saved dealer can no longer be verified.', 'ffl-bridge-for-woocommerce' ); ?></p>
+							<p class="description"><?php echo esc_html__( 'A required checkout fails closed if the API is unavailable or the saved dealer can no longer be verified. It also blocks shoppers who have no verified checkout network dealer nearby, so run the connection test below to check coverage before requiring a selection.', 'ffl-bridge-for-woocommerce' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="ffl_bridge_result_scope"><?php echo esc_html__( 'Dealers shown at checkout', 'ffl-bridge-for-woocommerce' ); ?></label></th>
+						<td>
+							<select id="ffl_bridge_result_scope" name="ffl_bridge_result_scope">
+								<option value="<?php echo esc_attr( FFL_Bridge_Network::SCOPE_ALL ); ?>" <?php selected( $result_scope, FFL_Bridge_Network::SCOPE_ALL ); ?>><?php echo esc_html__( 'Verified network first, plus labeled directory listings', 'ffl-bridge-for-woocommerce' ); ?></option>
+								<option value="<?php echo esc_attr( FFL_Bridge_Network::SCOPE_VERIFIED ); ?>" <?php selected( $result_scope, FFL_Bridge_Network::SCOPE_VERIFIED ); ?>><?php echo esc_html__( 'Verified checkout network only', 'ffl-bridge-for-woocommerce' ); ?></option>
+							</select>
+							<p class="description"><?php echo esc_html__( 'Directory listings are labeled "Directory listing only" and have no select button. Hiding them keeps results short but may leave shoppers with no visible dealers where the verified network is still small.', 'ffl-bridge-for-woocommerce' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="ffl_bridge_preferred_licenses"><?php echo esc_html__( 'Store preferred dealers', 'ffl-bridge-for-woocommerce' ); ?></label></th>
+						<td>
+							<textarea id="ffl_bridge_preferred_licenses" name="ffl_bridge_preferred_licenses" rows="5" cols="40" class="code" spellcheck="false"><?php echo esc_textarea( implode( "\n", $preferred_licenses ) ); ?></textarea>
+							<p class="description">
+								<?php
+								echo esc_html(
+									sprintf(
+										/* translators: %d: maximum number of preferred dealers. */
+										__( 'One FFL license number per line, with or without dashes (up to %d). Matching dealers are labeled "Store preferred dealer" and listed first when they appear in a shopper\'s search. This list stays on your site. A preferred dealer can only be selected after FFL Bridge verifies it for the checkout network; until then it appears as a directory listing.', 'ffl-bridge-for-woocommerce' ),
+										FFL_Bridge_Network::MAX_PREFERRED
+									)
+								);
+								?>
+							</p>
 						</td>
 					</tr>
 					<tr>
@@ -322,7 +420,7 @@ final class FFL_Bridge_Settings {
 
 			<hr>
 			<h2><?php echo esc_html__( 'Connection test', 'ffl-bridge-for-woocommerce' ); ?></h2>
-			<p><?php echo esc_html__( 'Save changes before testing. The request is made by your WordPress server; the key is not returned to this page.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<p><?php echo esc_html__( 'Save changes before testing. The request is made by your WordPress server; the key is not returned to this page. The test runs one sample search and reports how many results are in the verified checkout network.', 'ffl-bridge-for-woocommerce' ); ?></p>
 			<p>
 				<button type="button" class="button" id="ffl-bridge-test" <?php disabled( ! FFL_Bridge_API_Client::is_configured() ); ?>><?php echo esc_html__( 'Test saved connection', 'ffl-bridge-for-woocommerce' ); ?></button>
 				<span id="ffl-bridge-test-result" role="status" aria-live="polite"></span>
