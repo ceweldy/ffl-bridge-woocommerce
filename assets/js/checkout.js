@@ -116,7 +116,6 @@
 				appendDealerDetails( selectedBox, selected, false, config );
 				if ( selected.followUp ) {
 					selectedBox.classList.add( 'is-unconfirmed' );
-					selectedBox.appendChild( element( 'p', 'ffl-bridge-unconfirmed-note', unconfirmedNote( selected, config ) ) );
 					selectedBox.appendChild( element( 'p', 'ffl-bridge-followup', message( config, 'followUp', 'Next step: contact your selected FFL dealer and confirm they will accept this transfer. Then ask them to send a copy of their current FFL to the store.' ) ) );
 				}
 				selectedBox.appendChild( element( 'p', 'ffl-bridge-confirm-notice', message( config, 'confirmNotice', 'Contact the dealer before the order ships.' ) ) );
