@@ -59,6 +59,8 @@ Data is sent to `https://www.fflbridge.com/api/v1` only in these cases:
 
 The plugin does not send shopper names, email addresses, billing or shipping addresses, or payment details to FFL Bridge.
 
+Copies downloaded from fflbridge.com, not the copy from WordPress.org, also check `https://fflbridge.com/api/plugins/woocommerce/update` for new versions when WordPress checks for plugin updates (at most every 12 hours, or every hour after a failed check), and download the update package from fflbridge.com when an administrator installs an update. That check sends only the plugin version in its user agent and standard request headers; it sends no API key, store data, or shopper data.
+
 Stored in WordPress: search results are cached for up to five minutes; the current selection is kept in the WooCommerce session; dealer details are saved on the order; and when a search finds no confirmed dealer, the first three digits of the ZIP code, the radius, and counts are kept for up to 31 days (30 days per search, kept by day) so administrators can see coverage gaps.
 
 FFL Bridge [Terms of Service](https://www.fflbridge.com/terms) and [Privacy Policy](https://www.fflbridge.com/privacy).
@@ -105,6 +107,10 @@ No. The dealer is saved as order details. Your staff follow your own shipping an
 
 No. Confirm the dealer, license, willingness to accept the transfer, destination, and all applicable requirements before shipment.
 
+= What must I do when upgrading from 1.0.x? =
+
+Version 1.0.x sent the API key to the checkout browser. Revoke any key that was used with 1.0.x, committed to a repository, or included in a distributed build, then create a replacement and enter it under WooCommerce > FFL Bridge (or in `FFL_BRIDGE_API_KEY`). An upgrade cannot invalidate an already exposed credential.
+
 = What happens if FFL Bridge is unavailable? =
 
 New searches and dealer checks cannot complete until the service is back. The plugin does not bypass a required dealer selection.
@@ -149,7 +155,7 @@ Uninstalling removes the plugin settings, including an API key saved in WordPres
 
 = 1.2.0 =
 
-Adds hybrid dealer selection, license follow-up instructions, and one-click transfer confirmation. Existing stores keep their current dealer setting.
+Adds hybrid dealer selection, license follow-up instructions, and one-click transfer confirmation. Existing stores keep their current dealer setting. Upgrading from 1.0.x: also revoke and replace every API key used with 1.0.x, because updating the plugin does not invalidate it.
 
 = 1.1.0 =
 
