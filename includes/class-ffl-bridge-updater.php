@@ -186,7 +186,12 @@ final class FFL_Bridge_Updater {
 
 		$item     = self::update_item( $manifest );
 		$basename = self::basename();
-		if ( version_compare( $manifest['version'], FFL_BRIDGE_VERSION, '>' ) ) {
+		// Right after an update, this request still has the old constant, while
+		// WordPress has already read the new version from disk into checked.
+		$installed = is_array( $transient->checked ?? null ) && is_string( $transient->checked[ $basename ] ?? null )
+			? $transient->checked[ $basename ]
+			: FFL_BRIDGE_VERSION;
+		if ( version_compare( $manifest['version'], $installed, '>' ) ) {
 			$transient->response              = is_array( $transient->response ?? null ) ? $transient->response : array();
 			$transient->response[ $basename ] = $item;
 			unset( $transient->no_update[ $basename ] );

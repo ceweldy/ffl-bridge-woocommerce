@@ -35,6 +35,20 @@ final class UpdaterTest extends FFL_Bridge_TestCase {
 		}
 	}
 
+	public function test_freshly_installed_version_on_disk_is_not_offered_again(): void {
+		$this->serve( $this->manifest( '1.3.0' ) );
+
+		$transient = FFL_Bridge_Updater::inject_update(
+			(object) array(
+				'checked'  => array( 'ffl-bridge-for-woocommerce/ffl-bridge.php' => '1.3.0' ),
+				'response' => array(),
+			)
+		);
+
+		$this->assertArrayNotHasKey( 'ffl-bridge-for-woocommerce/ffl-bridge.php', $transient->response );
+		$this->assertArrayHasKey( 'ffl-bridge-for-woocommerce/ffl-bridge.php', $transient->no_update );
+	}
+
 	public function test_stale_update_entry_is_removed_when_no_newer_version_exists(): void {
 		$this->serve( $this->manifest( FFL_BRIDGE_VERSION ) );
 		$stale = (object) array( 'new_version' => '9.9.9' );
