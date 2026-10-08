@@ -15,7 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Fixed
 
 - Order metadata and labels keep transfer acceptance, license verification, and the selection basis separate, so a dealer with confirmed transfers but no verified license copy is no longer shown as unconfirmed for transfers.
-- The coverage-gap log stores daily buckets, so each event expires 30 days after it happened even when an area keeps getting new searches.
+- The coverage-gap log stores daily buckets, so each day of searches expires 30 days after its last search, even when an area keeps getting new searches.
 
 - Clear shopper messages when no dealer confirmed to accept transfers is found, with radius advice and wording that depends on whether a dealer is required.
 - A coverage log and dismissible admin notice listing three-digit ZIP areas where shoppers found no confirmed transfer dealer, plus a coverage table on the settings page.

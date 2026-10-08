@@ -37,8 +37,8 @@ final class FFL_Bridge_Coverage {
 	 * Record a search that found no confirmed transfer dealer.
 	 *
 	 * Events are stored in one bucket per ZIP area and UTC day. A bucket is
-	 * dropped as soon as its day starts more than 30 days ago, so every event
-	 * expires on its own schedule even when an area keeps getting new ones.
+	 * dropped 30 days after its latest event, so old days expire even when an
+	 * area keeps getting new searches.
 	 *
 	 * @param string   $zip Five-digit ZIP code.
 	 * @param int      $radius Search radius in miles.
@@ -152,7 +152,10 @@ final class FFL_Bridge_Coverage {
 					continue;
 				}
 
-				if ( (int) $match[1] * DAY_IN_SECONDS < $oldest ) {
+				// Keep a day while its latest event is inside the window, so a
+				// day is never dropped while it still holds recent events. Counts
+				// can then include events up to one day older than the window.
+				if ( absint( $bucket['last'] ) < $oldest || (int) $match[1] * DAY_IN_SECONDS + DAY_IN_SECONDS < $oldest ) {
 					continue;
 				}
 
