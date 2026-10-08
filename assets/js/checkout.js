@@ -68,7 +68,7 @@
 			badges.appendChild( element( 'span', 'ffl-bridge-badge is-preferred', message( config, 'preferred', 'Store preferred dealer' ) ) );
 		}
 		if ( dealer.network === 'unconfirmed' || dealer.followUp ) {
-			badges.appendChild( dealer.transferStatus === 'confirmed'
+			badges.appendChild( dealer.transferStatus === 'confirmed' || dealer.transferStatus === 'merchant_confirmed'
 				? element( 'span', 'ffl-bridge-badge is-unconfirmed', message( config, 'licenseBadge', 'License not verified' ) )
 				: element( 'span', 'ffl-bridge-badge is-unconfirmed', message( config, 'unconfirmed', 'Transfer not confirmed' ) ) );
 		} else if ( dealer.network === 'verified' ) {
@@ -82,7 +82,7 @@
 	}
 
 	function unconfirmedNote( dealer, config ) {
-		return dealer.transferStatus === 'confirmed'
+		return dealer.transferStatus === 'confirmed' || dealer.transferStatus === 'merchant_confirmed'
 			? message( config, 'licenseNote', 'This dealer has confirmed transfers with FFL Bridge, but its license copy is not verified yet.' )
 			: message( config, 'contactDealer', 'This dealer has not confirmed with FFL Bridge that it accepts transfers. You can still choose it.' );
 	}

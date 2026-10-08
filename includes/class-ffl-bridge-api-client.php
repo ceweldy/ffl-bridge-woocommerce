@@ -323,9 +323,11 @@ final class FFL_Bridge_API_Client {
 	/**
 	 * Report a store's transfer confirmation to FFL Bridge.
 	 *
-	 * Calls POST /api/v1/dealers/{dealerId}/transfer-confirmations. The
-	 * request is sent once, without retries, so a confirmation is never
-	 * recorded twice. A 404 means the API does not offer the endpoint yet.
+	 * Calls POST /api/v1/dealers/{dealerId}/transfer-confirmations. Without a
+	 * file the body is JSON. With a file it is multipart/form-data with the
+	 * same fields as text parts and a licenseFile part, which is what the API
+	 * expects. The request is sent once, without retries. A 404 means the API
+	 * does not offer the endpoint yet.
 	 *
 	 * @param string                     $dealer_id Dealer UUID.
 	 * @param string                     $license License number.
@@ -348,18 +350,16 @@ final class FFL_Bridge_API_Client {
 			$body['note'] = $note;
 		}
 
+		$path      = '/dealers/' . rawurlencode( strtolower( $dealer_id ) ) . '/transfer-confirmations';
+		$multipart = null;
 		if ( null !== $file && is_readable( $file['path'] ?? '' ) ) {
 			$contents = file_get_contents( $file['path'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local private file, not a remote request.
 			if ( false !== $contents ) {
-				$body['licenseFile'] = array(
-					'filename'      => $file['filename'] ?? 'license',
-					'contentType'   => $file['contentType'] ?? 'application/octet-stream',
-					'contentBase64' => base64_encode( $contents ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- JSON file transport, not obfuscation.
-				);
+				$multipart = self::multipart_body( $body, $contents, $file['filename'] ?? 'license', $file['contentType'] ?? 'application/octet-stream' );
 			}
 		}
 
-		$response = self::send( 'POST', '/dealers/' . rawurlencode( strtolower( $dealer_id ) ) . '/transfer-confirmations', array(), $body );
+		$response = self::send( 'POST', $path, array(), $body, $multipart );
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
@@ -428,7 +428,7 @@ final class FFL_Bridge_API_Client {
 			'accepts_transfers' => true === ( $raw['acceptsTransfers'] ?? false ),
 			'is_active'         => ! array_key_exists( 'isActive', $raw ) || true === $raw['isActive'],
 			'checkout_eligible' => array_key_exists( 'checkoutEligible', $raw ) ? true === $raw['checkoutEligible'] : null,
-			'transfer_status'   => in_array( $raw['transferStatus'] ?? null, array( 'confirmed', 'declined', 'unconfirmed' ), true ) ? $raw['transferStatus'] : null,
+			'transfer_status'   => in_array( $raw['transferStatus'] ?? null, array( 'confirmed', 'merchant_confirmed', 'declined', 'unconfirmed' ), true ) ? $raw['transferStatus'] : null,
 		);
 	}
 
@@ -506,13 +506,14 @@ final class FFL_Bridge_API_Client {
 	 * GET requests are retried once on a transport error or a 502, 503, or
 	 * 504 response. Other methods are sent once.
 	 *
-	 * @param string               $method GET or POST.
-	 * @param string               $path API path beneath /api/v1.
-	 * @param array<string, mixed> $query Optional query string.
-	 * @param array<string, mixed> $body Optional JSON body for POST.
+	 * @param string                     $method GET or POST.
+	 * @param string                     $path API path beneath /api/v1.
+	 * @param array<string, mixed>       $query Optional query string.
+	 * @param array<string, mixed>       $body Optional JSON body for POST.
+	 * @param array<string, string>|null $raw Optional prebuilt body: content_type and body.
 	 * @return array<string, mixed>|WP_Error Raw HTTP response.
 	 */
-	private static function send( string $method, string $path, array $query = array(), array $body = array() ): array|WP_Error {
+	private static function send( string $method, string $path, array $query = array(), array $body = array(), ?array $raw = null ): array|WP_Error {
 		$api_key = self::get_api_key();
 		if ( ! self::is_valid_api_key( $api_key ) ) {
 			return new WP_Error( 'ffl_bridge_not_configured', __( 'FFL Bridge is not configured. Ask the store administrator for help.', 'ffl-bridge-for-woocommerce' ) );
@@ -543,8 +544,8 @@ final class FFL_Bridge_API_Client {
 		);
 
 		if ( 'GET' !== $method ) {
-			$args['headers']['Content-Type'] = 'application/json';
-			$args['body']                    = (string) wp_json_encode( $body );
+			$args['headers']['Content-Type'] = null === $raw ? 'application/json' : $raw['content_type'];
+			$args['body']                    = null === $raw ? (string) wp_json_encode( $body ) : $raw['body'];
 			$response                        = wp_safe_remote_post( $url, $args );
 			if ( is_wp_error( $response ) ) {
 				self::log( 'warning', 'API transport failure.' );
@@ -564,6 +565,36 @@ final class FFL_Bridge_API_Client {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Build a multipart/form-data body with text fields and one file part.
+	 *
+	 * @param array<string, mixed> $fields Text fields. Booleans become "true" or "false".
+	 * @param string               $contents File contents.
+	 * @param string               $filename File name.
+	 * @param string               $content_type File MIME type.
+	 * @return array{content_type: string, body: string}
+	 */
+	public static function multipart_body( array $fields, string $contents, string $filename, string $content_type ): array {
+		$boundary = 'ffl-bridge-' . bin2hex( random_bytes( 12 ) );
+		$filename = (string) preg_replace( '/[^A-Za-z0-9._-]/', '_', $filename );
+		$body     = '';
+		foreach ( $fields as $name => $value ) {
+			$text  = is_bool( $value ) ? ( $value ? 'true' : 'false' ) : (string) $value;
+			$body .= '--' . $boundary . "\r\n" . 'Content-Disposition: form-data; name="' . $name . '"' . "\r\n\r\n" . $text . "\r\n";
+		}
+
+		$body .= '--' . $boundary . "\r\n"
+			. 'Content-Disposition: form-data; name="licenseFile"; filename="' . $filename . '"' . "\r\n"
+			. 'Content-Type: ' . $content_type . "\r\n\r\n"
+			. $contents . "\r\n"
+			. '--' . $boundary . "--\r\n";
+
+		return array(
+			'content_type' => 'multipart/form-data; boundary=' . $boundary,
+			'body'         => $body,
+		);
 	}
 
 	/**

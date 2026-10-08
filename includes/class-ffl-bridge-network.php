@@ -358,7 +358,20 @@ final class FFL_Bridge_Network {
 			return 0;
 		}
 
-		return 'confirmed' === ( $dealer['transfer_status'] ?? null ) ? 1 : 2;
+		return self::transfer_status_confirmed( $dealer['transfer_status'] ?? null ) ? 1 : 2;
+	}
+
+	/**
+	 * Determine whether an API transfer status means transfers are confirmed.
+	 *
+	 * The merchant_confirmed status means this store already confirmed the dealer with
+	 * FFL Bridge and it is waiting for FFL Bridge review.
+	 *
+	 * @param mixed $status API transferStatus.
+	 * @return bool
+	 */
+	public static function transfer_status_confirmed( mixed $status ): bool {
+		return in_array( $status, array( 'confirmed', 'merchant_confirmed' ), true );
 	}
 
 	/**
@@ -375,7 +388,7 @@ final class FFL_Bridge_Network {
 			return 'verified';
 		}
 
-		return ! empty( $dealer['transfer_confirmed'] ) || 'confirmed' === ( $dealer['transfer_status'] ?? null )
+		return ! empty( $dealer['transfer_confirmed'] ) || self::transfer_status_confirmed( $dealer['transfer_status'] ?? null )
 			? 'license_unverified'
 			: 'transfer_unconfirmed';
 	}
