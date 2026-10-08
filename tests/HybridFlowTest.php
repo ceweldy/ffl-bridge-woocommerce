@@ -136,9 +136,12 @@ final class HybridFlowTest extends FFL_Bridge_TestCase {
 		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_settings_version'] = '1.1.0';
 		FFL_Bridge_Network::maybe_migrate();
 
+		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_result_scope'] = FFL_Bridge_Network::SCOPE_VERIFIED;
+
 		FFL_Bridge_Settings::apply_hybrid_offer( 'switch' );
 
 		$this->assertSame( 'hybrid', FFL_Bridge_Network::get_dealer_mode() );
+		$this->assertTrue( FFL_Bridge_Network::hybrid_enabled() );
 		$this->assertFalse( FFL_Bridge_Network::hybrid_offer_pending() );
 
 		FFL_Bridge_Settings::apply_hybrid_offer( 'bogus' );
