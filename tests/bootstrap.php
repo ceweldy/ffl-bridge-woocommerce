@@ -300,12 +300,6 @@ function download_url( string $url, int $timeout = 300 ): string|WP_Error {
 	return $GLOBALS['ffl_bridge_test_download_file'] ?? new WP_Error( 'http_request_failed', 'No file.' );
 }
 
-function wp_delete_file( string $file ): void {
-	if ( is_file( $file ) ) {
-		unlink( $file );
-	}
-}
-
 function add_filter( string $hook, mixed $callback, int $priority = 10, int $args = 1 ): bool {
 	$GLOBALS['ffl_bridge_test_hooks'][ $hook ][] = $callback;
 	return true;
