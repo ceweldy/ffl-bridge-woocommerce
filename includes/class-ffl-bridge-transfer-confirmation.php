@@ -330,8 +330,37 @@ final class FFL_Bridge_Transfer_Confirmation {
 			return $dir;
 		}
 
-		$stored = bin2hex( random_bytes( 16 ) ) . '.' . $upload['ext'];
-		if ( ! move_uploaded_file( $upload['tmp_name'], $dir . '/' . $stored ) ) {
+		if ( ! function_exists( 'wp_handle_upload' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		}
+
+		// Point this one upload at the private folder, with a random name.
+		$stored     = bin2hex( random_bytes( 16 ) ) . '.' . $upload['ext'];
+		$to_private = static function ( array $dirs ) use ( $dir ): array {
+			$dirs['path']   = $dir;
+			$dirs['url']    = '';
+			$dirs['subdir'] = '';
+			return $dirs;
+		};
+
+		add_filter( 'upload_dir', $to_private );
+		$moved = wp_handle_upload(
+			array(
+				'name'     => $stored,
+				'type'     => $upload['type'],
+				'tmp_name' => $upload['tmp_name'],
+				'error'    => UPLOAD_ERR_OK,
+				'size'     => $upload['size'],
+			),
+			array(
+				'test_form'                => false,
+				'mimes'                    => self::ALLOWED_TYPES,
+				'unique_filename_callback' => static fn (): string => $stored,
+			)
+		);
+		remove_filter( 'upload_dir', $to_private );
+
+		if ( ! is_array( $moved ) || ! empty( $moved['error'] ) || empty( $moved['file'] ) || realpath( dirname( $moved['file'] ) ) !== realpath( $dir ) ) {
 			return new WP_Error( 'ffl_bridge_storage', __( 'The license file could not be stored.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
