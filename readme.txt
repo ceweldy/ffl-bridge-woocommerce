@@ -59,7 +59,7 @@ Data is sent to `https://www.fflbridge.com/api/v1` only in these cases:
 
 The plugin does not send shopper names, email addresses, billing or shipping addresses, or payment details to FFL Bridge.
 
-Stored in WordPress: search results are cached for up to five minutes; the current selection is kept in the WooCommerce session; dealer details are saved on the order; and when a search finds no confirmed dealer, the first three digits of the ZIP code, the radius, and counts are kept for up to 30 days so administrators can see coverage gaps.
+Stored in WordPress: search results are cached for up to five minutes; the current selection is kept in the WooCommerce session; dealer details are saved on the order; and when a search finds no confirmed dealer, the first three digits of the ZIP code, the radius, and counts are kept for up to 31 days (30 days per search, kept by day) so administrators can see coverage gaps.
 
 FFL Bridge [Terms of Service](https://www.fflbridge.com/terms) and [Privacy Policy](https://www.fflbridge.com/privacy).
 

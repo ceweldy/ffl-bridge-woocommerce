@@ -69,6 +69,16 @@ final class CoverageTest extends FFL_Bridge_TestCase {
 		$this->assertCount( 2, $stored['areas']['a480'] );
 	}
 
+	public function test_late_day_events_are_not_expired_from_midnight(): void {
+		$day      = 86400;
+		$midnight = intdiv( self::NOW, $day ) * $day;
+		FFL_Bridge_Coverage::record_gap( '48047', 50, false, '', $midnight + 23 * 3600 );
+
+		// Thirty days after that midnight, the event is still under 30 days old.
+		$this->assertSame( 1, FFL_Bridge_Coverage::total( FFL_Bridge_Coverage::get_log( $midnight + FFL_Bridge_Coverage::WINDOW + 3600 ) ) );
+		$this->assertSame( 0, FFL_Bridge_Coverage::total( FFL_Bridge_Coverage::get_log( $midnight + 23 * 3600 + FFL_Bridge_Coverage::WINDOW + 1 ) ) );
+	}
+
 	public function test_events_never_outlive_the_window(): void {
 		FFL_Bridge_Coverage::record_gap( '48047', 100, false, '', self::NOW );
 
