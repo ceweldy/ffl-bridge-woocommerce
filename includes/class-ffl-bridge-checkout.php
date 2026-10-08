@@ -612,13 +612,18 @@ final class FFL_Bridge_Checkout {
 	 * Check the canonical dealer flags that must hold for a selection.
 	 *
 	 * Every dealer must still be active. A verified network dealer must also
-	 * still accept transfers; a hybrid dealer may not have confirmed yet.
+	 * still accept transfers; a hybrid dealer may not have confirmed yet, but
+	 * one that has declined transfers is rejected.
 	 *
 	 * @param array<string, mixed> $dealer Canonical dealer.
 	 * @return bool
 	 */
 	public static function dealer_still_acceptable( array $dealer ): bool {
 		if ( empty( $dealer['is_active'] ) ) {
+			return false;
+		}
+
+		if ( ! self::is_verified_selection( $dealer ) && 'declined' === ( $dealer['transfer_status'] ?? null ) ) {
 			return false;
 		}
 

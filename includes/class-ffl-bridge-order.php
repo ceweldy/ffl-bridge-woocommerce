@@ -78,7 +78,7 @@ final class FFL_Bridge_Order {
 			'basis'              => '',
 			'store_confirmed_at' => (string) $order->get_meta( '_ffl_bridge_store_confirmed_at' ),
 			'store_confirmed_by' => (string) $order->get_meta( '_ffl_bridge_store_confirmed_by_name' ),
-			'license_file'       => '' !== (string) $order->get_meta( '_ffl_bridge_license_file' ) ? 'yes' : 'no',
+			'license_file'       => ! empty( $order->get_meta( '_ffl_bridge_license_file' ) ) ? 'yes' : 'no',
 		);
 
 		if ( $legacy ) {

@@ -20,6 +20,7 @@ abstract class FFL_Bridge_TestCase extends PHPUnitTestCase {
 		$GLOBALS['ffl_bridge_test_filters']         = array();
 		$GLOBALS['ffl_bridge_test_caps']            = array();
 		$GLOBALS['ffl_bridge_test_orders']          = array();
+		$GLOBALS['ffl_bridge_test_post_types']      = array();
 		$GLOBALS['ffl_bridge_test_http']            = array();
 		$GLOBALS['ffl_bridge_test_http_responses']  = array();
 		$GLOBALS['ffl_bridge_test_site_transients'] = array();

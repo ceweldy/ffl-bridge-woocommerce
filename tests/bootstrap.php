@@ -184,6 +184,16 @@ function wc_get_order( mixed $id ): WC_Order|false {
 	return $GLOBALS['ffl_bridge_test_orders'][ (int) $id ] ?? false;
 }
 
+function wp_delete_file( string $file ): void {
+	if ( is_file( $file ) ) {
+		unlink( $file );
+	}
+}
+
+function get_post_type( int $post_id ): string|false {
+	return $GLOBALS['ffl_bridge_test_post_types'][ $post_id ] ?? false;
+}
+
 function get_current_user_id(): int {
 	return 7;
 }

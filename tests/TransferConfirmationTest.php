@@ -160,6 +160,77 @@ final class TransferConfirmationTest extends FFL_Bridge_TestCase {
 		$this->assertStringContainsString( 'License copy attached: yes.', $order->notes[0] );
 	}
 
+	public function test_order_data_reads_an_attached_file_record_without_warnings(): void {
+		$order = $this->order();
+		$order->update_meta_data( '_ffl_bridge_license_file', array( 'stored' => str_repeat( 'a', 32 ) . '.pdf', 'filename' => 'license.pdf' ) );
+
+		set_error_handler(
+			static function ( int $errno, string $message ): never {
+				throw new ErrorException( $message, 0, $errno );
+			}
+		);
+		try {
+			$data = FFL_Bridge_Order::get_ffl_data( $order );
+		} finally {
+			restore_error_handler();
+		}
+
+		$this->assertSame( 'yes', $data['license_file'] );
+		$this->assertSame( 'no', FFL_Bridge_Order::get_ffl_data( $this->order() )['license_file'] );
+	}
+
+	public function test_license_file_is_deleted_with_the_order_in_both_storage_modes(): void {
+		$dir = FFL_Bridge_Transfer_Confirmation::private_dir();
+		$this->assertIsString( $dir );
+
+		foreach ( array( 601 => 'delete_order_file', 602 => 'delete_post_file' ) as $order_id => $hook ) {
+			$stored = str_repeat( (string) ( $order_id - 600 ), 32 ) . '.pdf';
+			file_put_contents( $dir . '/' . $stored, '%PDF-1.4' );
+			$order = $this->order();
+			$order->update_meta_data( '_ffl_bridge_license_file', array( 'stored' => $stored ) );
+			$GLOBALS['ffl_bridge_test_orders'][ $order_id ] = $order;
+			$GLOBALS['ffl_bridge_test_post_types'][ $order_id ] = 'shop_order';
+
+			FFL_Bridge_Transfer_Confirmation::$hook( $order_id );
+			$this->assertFileDoesNotExist( $dir . '/' . $stored );
+
+			// A second call, as when both hooks fire, is harmless.
+			FFL_Bridge_Transfer_Confirmation::$hook( $order_id );
+		}
+
+		// Other post types are left alone.
+		$stored = str_repeat( '3', 32 ) . '.pdf';
+		file_put_contents( $dir . '/' . $stored, '%PDF-1.4' );
+		$order = $this->order();
+		$order->update_meta_data( '_ffl_bridge_license_file', array( 'stored' => $stored ) );
+		$GLOBALS['ffl_bridge_test_orders'][603]     = $order;
+		$GLOBALS['ffl_bridge_test_post_types'][603] = 'page';
+		FFL_Bridge_Transfer_Confirmation::delete_post_file( 603 );
+		$this->assertFileExists( $dir . '/' . $stored );
+	}
+
+	public function test_replacing_a_license_file_removes_the_previous_one(): void {
+		$GLOBALS['ffl_bridge_test_http_responses'] = array( $this->response( 201, array( 'success' => true ) ) );
+		$dir = FFL_Bridge_Transfer_Confirmation::private_dir();
+		$old = str_repeat( 'b', 32 ) . '.pdf';
+		file_put_contents( $dir . '/' . $old, '%PDF-1.4' );
+		$new = str_repeat( 'c', 32 ) . '.pdf';
+		file_put_contents( $dir . '/' . $new, '%PDF-1.4' );
+		$order = $this->order();
+		$order->update_meta_data( '_ffl_bridge_license_file', array( 'stored' => $old ) );
+
+		$file = array(
+			'stored'      => $new,
+			'filename'    => 'license.pdf',
+			'contentType' => 'application/pdf',
+			'path'        => $dir . '/' . $new,
+		);
+		FFL_Bridge_Transfer_Confirmation::confirm( $order, FFL_Bridge_Order::get_ffl_data( $order ), 7, 'Store Manager', $file, '' );
+
+		$this->assertFileDoesNotExist( $dir . '/' . $old );
+		$this->assertFileExists( $dir . '/' . $new );
+	}
+
 	public function test_valid_pdf_and_png_uploads_are_accepted(): void {
 		$pdf = FFL_Bridge_Transfer_Confirmation::validate_upload( $this->upload( 'license.pdf', "%PDF-1.4\n%%EOF\n" ) );
 		$this->assertIsArray( $pdf );

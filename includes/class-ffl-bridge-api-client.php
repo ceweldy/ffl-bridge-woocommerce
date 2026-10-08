@@ -298,7 +298,9 @@ final class FFL_Bridge_API_Client {
 		$verified    = true === ( $eligibility['selectable'] ?? false ) && true === ( $eligibility['licenseVerified'] ?? false );
 		$listed      = true === ( $eligibility['isActive'] ?? false ) && true === ( $eligibility['isAtfListed'] ?? false );
 
-		if ( ! $verified && ! ( $allow_unconfirmed && $listed ) ) {
+		$declined = 'declined' === ( $dealer['transfer_status'] ?? null );
+
+		if ( ! $verified && ! ( $allow_unconfirmed && $listed && ! $declined ) ) {
 			return new WP_Error( 'ffl_bridge_dealer_unavailable', __( 'That dealer is not currently selectable. Choose another dealer or contact the store.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
