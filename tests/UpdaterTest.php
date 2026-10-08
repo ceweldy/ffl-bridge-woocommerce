@@ -180,6 +180,12 @@ final class UpdaterTest extends FFL_Bridge_TestCase {
 		$this->assertSame( array(), $GLOBALS['ffl_bridge_test_downloads'] );
 	}
 
+	public function test_other_plugins_updates_never_fetch_the_manifest(): void {
+		$this->assertFalse( FFL_Bridge_Updater::verify_download( false, 'https://fflbridge.com/other-plugin.zip', null, array( 'plugin' => 'other/other.php' ) ) );
+		$this->assertFalse( FFL_Bridge_Updater::verify_download( false, 'https://downloads.wordpress.org/release/wordpress-7.1.4.zip', null, array() ) );
+		$this->assertSame( array(), $GLOBALS['ffl_bridge_test_http'] );
+	}
+
 	public function test_unavailable_manifest_blocks_this_plugins_update_but_not_others(): void {
 		$ours = FFL_Bridge_Updater::verify_download( false, 'https://fflbridge.com/downloads/ffl-bridge-for-woocommerce-1.3.0.zip', null, array( 'plugin' => 'ffl-bridge-for-woocommerce/ffl-bridge.php' ) );
 		$this->assertInstanceOf( WP_Error::class, $ours );
