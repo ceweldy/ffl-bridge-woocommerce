@@ -5,7 +5,7 @@ Tested up to: 7.0
 Requires PHP: 8.3
 WC requires at least: 10.8
 WC tested up to: 10.9
-Stable tag: 1.1.0
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -106,6 +106,15 @@ The uninstall process removes the plugin settings, including an API key saved in
 
 == Changelog ==
 
+= 1.2.0 =
+
+* Hybrid dealer selection, the default for new installs: confirmed dealers first, plus nearby licensed dealers labeled "License not verified" or "Transfer not confirmed". Existing installs keep their setting and see an offer to switch.
+* Shopper follow-up instructions on checkout, the thank-you page, and customer emails, with license copy email and fax settings.
+* "Mark transfer confirmed" on the order screen with an optional private license file, reported to FFL Bridge when available.
+* Clearer messages and an admin coverage notice when no transfer-accepting dealer is nearby.
+* Order records keep transfer acceptance, license verification, and selection basis separate.
+* Automatic updates from FFL Bridge with sha256 package verification. WordPress auto-updates can be turned on per site.
+
 = 1.1.0 =
 
 * Security: Move authenticated FFL Bridge requests to WordPress so the API key is not sent to checkout browsers.
@@ -121,6 +130,10 @@ The uninstall process removes the plugin settings, including an API key saved in
 * Initial proof-of-concept release.
 
 == Upgrade Notice ==
+
+= 1.2.0 =
+
+Adds hybrid dealer selection and automatic updates from FFL Bridge. Sites on 1.1.0 or older must install 1.2.0 manually once; later versions then appear under Dashboard > Updates.
 
 = 1.1.0 =
 

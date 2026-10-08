@@ -10,6 +10,7 @@ declare(strict_types=1);
 define( 'ABSPATH', dirname( __DIR__ ) . '/' );
 define( 'FFL_BRIDGE_VERSION', '1.1.0-test' );
 define( 'DAY_IN_SECONDS', 86400 );
+define( 'FFL_BRIDGE_PLUGIN_FILE', '/srv/www/wp-content/plugins/ffl-bridge-for-woocommerce/ffl-bridge.php' );
 define( 'FFL_BRIDGE_PLUGIN_URL', 'https://store.example.test/wp-content/plugins/ffl-bridge-for-woocommerce/' );
 
 $GLOBALS['ffl_bridge_test_options']    = array();
@@ -24,6 +25,9 @@ $GLOBALS['ffl_bridge_test_orders']          = array();
 $GLOBALS['ffl_bridge_test_http']            = array();
 $GLOBALS['ffl_bridge_test_http_responses']  = array();
 $GLOBALS['ffl_bridge_test_upload_dir']      = sys_get_temp_dir();
+$GLOBALS['ffl_bridge_test_site_transients'] = array();
+$GLOBALS['ffl_bridge_test_downloads']       = array();
+$GLOBALS['ffl_bridge_test_hooks']           = array();
 
 /** Minimal WordPress error object used by the runtime. */
 class WP_Error {
@@ -259,6 +263,48 @@ function wp_remote_retrieve_header( array|WP_Error $response, string $header ): 
 	return is_array( $response ) ? (string) ( $response['headers'][ strtolower( $header ) ] ?? '' ) : '';
 }
 
+function plugin_basename( string $file ): string {
+	return basename( dirname( $file ) ) . '/' . basename( $file );
+}
+
+function get_site_transient( string $key ): mixed {
+	return $GLOBALS['ffl_bridge_test_site_transients'][ $key ]['value'] ?? false;
+}
+
+function set_site_transient( string $key, mixed $value, int $expiration = 0 ): bool {
+	$GLOBALS['ffl_bridge_test_site_transients'][ $key ] = array( 'value' => $value, 'ttl' => $expiration );
+	return true;
+}
+
+function delete_site_transient( string $key ): bool {
+	unset( $GLOBALS['ffl_bridge_test_site_transients'][ $key ] );
+	return true;
+}
+
+function wp_kses_post( string $html ): string {
+	return strip_tags( $html, '<p><ul><li><strong><em><a><h4>' );
+}
+
+function download_url( string $url, int $timeout = 300 ): string|WP_Error {
+	$GLOBALS['ffl_bridge_test_downloads'][] = $url;
+	return $GLOBALS['ffl_bridge_test_download_file'] ?? new WP_Error( 'http_request_failed', 'No file.' );
+}
+
+function wp_delete_file( string $file ): void {
+	if ( is_file( $file ) ) {
+		unlink( $file );
+	}
+}
+
+function add_filter( string $hook, mixed $callback, int $priority = 10, int $args = 1 ): bool {
+	$GLOBALS['ffl_bridge_test_hooks'][ $hook ][] = $callback;
+	return true;
+}
+
+function add_action( string $hook, mixed $callback, int $priority = 10, int $args = 1 ): bool {
+	return add_filter( $hook, $callback, $priority, $args );
+}
+
 function __( string $text, string $domain = '' ): string {
 	return $text;
 }
@@ -349,6 +395,9 @@ require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-network.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-coverage.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-followup.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-transfer-confirmation.php';
+if ( is_readable( dirname( __DIR__ ) . '/includes/class-ffl-bridge-updater.php' ) ) {
+	require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-updater.php';
+}
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-selection.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-checkout.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-order.php';
