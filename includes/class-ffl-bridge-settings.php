@@ -79,6 +79,9 @@ final class FFL_Bridge_Settings {
 	public static function apply_hybrid_offer( string $choice ): void {
 		if ( 'switch' === $choice ) {
 			update_option( FFL_Bridge_Network::MODE_OPTION, FFL_Bridge_Network::MODE_HYBRID, false );
+			// Hybrid needs every nearby dealer listed, so a verified-only result
+			// scope would otherwise keep the switch from taking effect.
+			update_option( 'ffl_bridge_result_scope', FFL_Bridge_Network::SCOPE_ALL );
 		}
 
 		if ( in_array( $choice, array( 'switch', 'keep' ), true ) ) {
