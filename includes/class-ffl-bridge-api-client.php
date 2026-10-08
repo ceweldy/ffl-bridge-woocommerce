@@ -17,6 +17,8 @@ final class FFL_Bridge_API_Client {
 	private const TIMEOUT       = 6;
 	private const CACHE_TTL     = 300;
 
+	public const ALLOWED_RADII = array( 10, 25, 50, 100 );
+
 	/**
 	 * Return the configured API key.
 	 *
@@ -66,38 +68,66 @@ final class FFL_Bridge_API_Client {
 	/**
 	 * Search for active dealers by ZIP code.
 	 *
+	 * Results come from the public directory. Each normalized dealer carries
+	 * checkout_eligible: true for the verified checkout network, false for a
+	 * directory-only listing, and null when the API did not report the flag.
+	 *
 	 * @param string $zip ZIP code.
 	 * @param int    $radius Search radius in miles.
 	 * @param int    $limit Maximum result count.
 	 * @return array<int, array<string, mixed>>|WP_Error
 	 */
 	public static function search( string $zip, int $radius, int $limit = 20 ): array|WP_Error {
+		$result = self::search_with_meta( $zip, $radius, $limit );
+		return is_wp_error( $result ) ? $result : $result['dealers'];
+	}
+
+	/**
+	 * Search for dealers and return optional coverage metadata as well.
+	 *
+	 * By default only dealers listed as accepting transfers are requested. With
+	 * $include_unconfirmed, the API also returns its separate unconfirmed tier
+	 * (nearby dealers with no transfer acceptance on record), which feeds the
+	 * merchant-enabled fallback without a second request. APIs that predate
+	 * the tier ignore the parameter, and 'unconfirmed' is then null.
+	 *
+	 * @param string $zip ZIP code.
+	 * @param int    $radius Search radius in miles.
+	 * @param int    $limit Maximum result count.
+	 * @param bool   $transfers_only Request only transfer-accepting dealers.
+	 * @param bool   $include_unconfirmed Also request the unconfirmed tier.
+	 * @return array{dealers: array<int, array<string, mixed>>, unconfirmed: array<int, array<string, mixed>>|null, coverage: array<string, int>|null, reason: string, reason_message: string}|WP_Error
+	 */
+	public static function search_with_meta( string $zip, int $radius, int $limit = 20, bool $transfers_only = true, bool $include_unconfirmed = false ): array|WP_Error {
 		if ( 1 !== preg_match( '/\A\d{5}\z/', $zip ) ) {
 			return new WP_Error( 'ffl_bridge_invalid_zip', __( 'Enter a valid five-digit ZIP code.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		$allowed_radii = array( 10, 25, 50, 100 );
-		if ( ! in_array( $radius, $allowed_radii, true ) ) {
+		if ( ! in_array( $radius, self::ALLOWED_RADII, true ) ) {
 			return new WP_Error( 'ffl_bridge_invalid_radius', __( 'Choose a supported search radius.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		$limit     = max( 1, min( 25, $limit ) );
-		$cache_key = self::search_cache_key( $zip, $radius, $limit );
-		$cached    = get_transient( $cache_key );
-		if ( is_array( $cached ) ) {
+		$limit               = max( 1, min( 25, $limit ) );
+		$include_unconfirmed = $include_unconfirmed && $transfers_only;
+		$cache_key           = self::search_cache_key( $zip, $radius, $limit, $transfers_only, $include_unconfirmed );
+		$cached              = get_transient( $cache_key );
+		if ( is_array( $cached ) && isset( $cached['dealers'] ) && is_array( $cached['dealers'] ) ) {
 			return $cached;
 		}
 
-		$response = self::request(
-			'/search',
-			array(
-				'zip'              => $zip,
-				'radius'           => $radius,
-				'limit'            => $limit,
-				'acceptsTransfers' => 'true',
-			)
+		$query = array(
+			'zip'    => $zip,
+			'radius' => $radius,
+			'limit'  => $limit,
 		);
+		if ( $transfers_only ) {
+			$query['acceptsTransfers'] = 'true';
+		}
+		if ( $include_unconfirmed ) {
+			$query['includeUnconfirmed'] = 'true';
+		}
 
+		$response = self::request( '/search', $query );
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
@@ -107,29 +137,125 @@ final class FFL_Bridge_API_Client {
 			return new WP_Error( 'ffl_bridge_invalid_response', __( 'FFL Bridge returned an invalid search response.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		$results = array();
-		foreach ( array_slice( $raw_results, 0, $limit ) as $raw_dealer ) {
+		$result = array_merge(
+			array(
+				'dealers'     => self::normalize_dealer_list( $raw_results, $limit ),
+				'unconfirmed' => self::parse_unconfirmed_tier( $response['data'], $limit ),
+			),
+			self::parse_search_meta( $response['data'] )
+		);
+		set_transient( $cache_key, $result, self::CACHE_TTL );
+		return $result;
+	}
+
+	/**
+	 * Normalize a list of raw API dealers, dropping invalid entries.
+	 *
+	 * @param array<int|string, mixed> $raw_dealers Raw API dealers.
+	 * @param int                      $limit Maximum count.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private static function normalize_dealer_list( array $raw_dealers, int $limit ): array {
+		$dealers = array();
+		foreach ( array_slice( array_values( $raw_dealers ), 0, $limit ) as $raw_dealer ) {
 			if ( ! is_array( $raw_dealer ) ) {
 				continue;
 			}
 
 			$dealer = self::normalize_dealer( $raw_dealer );
 			if ( ! is_wp_error( $dealer ) ) {
-				$results[] = $dealer;
+				$dealers[] = $dealer;
 			}
 		}
 
-		set_transient( $cache_key, $results, self::CACHE_TTL );
-		return $results;
+		return $dealers;
+	}
+
+	/**
+	 * Read the API's unconfirmed tier, if the response has one.
+	 *
+	 * The tier lists current ATF-listed dealers with no transfer acceptance on
+	 * record. They are never checkout eligible. Dealers that declined
+	 * transfers are dropped here as well, in case the API ever includes one.
+	 *
+	 * @param mixed $data Response data object.
+	 * @param int   $limit Maximum count.
+	 * @return array<int, array<string, mixed>>|null Null when the response has no tier.
+	 */
+	public static function parse_unconfirmed_tier( mixed $data, int $limit = 25 ): ?array {
+		$tier = is_array( $data ) ? ( $data['unconfirmedTier'] ?? null ) : null;
+		if ( ! is_array( $tier ) || ! is_array( $tier['results'] ?? null ) ) {
+			return null;
+		}
+
+		$dealers = array();
+		foreach ( self::normalize_dealer_list( $tier['results'], $limit ) as $dealer ) {
+			if ( 'declined' !== $dealer['transfer_status'] ) {
+				$dealer['checkout_eligible'] = false;
+				$dealers[]                   = $dealer;
+			}
+		}
+
+		return $dealers;
+	}
+
+	/**
+	 * Read coverage metadata from a search response.
+	 *
+	 * Matches data.coverage from FFL Bridge search: radiusMiles,
+	 * directoryDealers, transferConfirmedDealers, verifiedCheckoutDealers,
+	 * transferDeclinedDealers, transferUnconfirmedDealers, and
+	 * emptyReason { code, message } (null when results are not empty).
+	 * Older APIs send no coverage, and malformed values are ignored.
+	 *
+	 * @param mixed $data Response data object.
+	 * @return array{coverage: array<string, int>|null, reason: string, reason_message: string}
+	 */
+	public static function parse_search_meta( mixed $data ): array {
+		$coverage = null;
+		$raw      = is_array( $data ) ? ( $data['coverage'] ?? null ) : null;
+		if ( is_array( $raw ) ) {
+			$map = array(
+				'radius'               => 'radiusMiles',
+				'dealers_in_radius'    => 'directoryDealers',
+				'accepting_transfers'  => 'transferConfirmedDealers',
+				'checkout_eligible'    => 'verifiedCheckoutDealers',
+				'transfer_declined'    => 'transferDeclinedDealers',
+				'transfer_unconfirmed' => 'transferUnconfirmedDealers',
+			);
+			foreach ( $map as $key => $api_key ) {
+				$value = $raw[ $api_key ] ?? null;
+				if ( is_int( $value ) && $value >= 0 ) {
+					$coverage[ $key ] = min( $value, 1000000 );
+				}
+			}
+		}
+
+		$empty   = is_array( $raw ) && is_array( $raw['emptyReason'] ?? null ) ? $raw['emptyReason'] : array();
+		$reason  = is_string( $empty['code'] ?? null ) ? strtoupper( $empty['code'] ) : '';
+		$message = is_string( $empty['message'] ?? null ) ? self::bounded_text( $empty['message'], 300 ) : '';
+		if ( 1 !== preg_match( '/\A[A-Z][A-Z_]{0,63}\z/', $reason ) ) {
+			$reason  = '';
+			$message = '';
+		}
+
+		return array(
+			'coverage'       => $coverage,
+			'reason'         => $reason,
+			'reason_message' => $message,
+		);
 	}
 
 	/**
 	 * Fetch one canonical active dealer for checkout verification.
 	 *
 	 * @param string $dealer_id Dealer UUID.
+	 * @param bool   $allow_unconfirmed Accept a listed, active dealer that is not
+	 *                                  in the verified checkout network. Used only
+	 *                                  for the merchant-enabled fallback.
 	 * @return array<string, mixed>|WP_Error
 	 */
-	public static function get_dealer( string $dealer_id ): array|WP_Error {
+	public static function get_dealer( string $dealer_id, bool $allow_unconfirmed = false ): array|WP_Error {
 		if ( 1 !== preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i', $dealer_id ) ) {
 			return new WP_Error( 'ffl_bridge_invalid_dealer', __( 'The selected dealer identifier is invalid.', 'ffl-bridge-for-woocommerce' ) );
 		}
@@ -149,28 +275,43 @@ final class FFL_Bridge_API_Client {
 			return $dealer;
 		}
 
-		$eligibility = $response['data']['eligibility'] ?? array();
-		if (
-			! is_array( $eligibility ) ||
-			true !== ( $eligibility['selectable'] ?? false ) ||
-			true !== ( $eligibility['licenseVerified'] ?? false )
-		) {
-			return new WP_Error( 'ffl_bridge_dealer_unavailable', __( 'That dealer is not currently selectable. Choose another dealer or contact the store.', 'ffl-bridge-for-woocommerce' ) );
-		}
-
-		$dealer['license_on_file']  = true === ( $eligibility['licenseOnFile'] ?? false );
-		$dealer['license_verified'] = true;
-		return $dealer;
+		return self::apply_eligibility( $dealer, $response['data']['eligibility'] ?? null, $allow_unconfirmed );
 	}
 
 	/**
-	 * Verify that the configured credential can reach the API.
+	 * Apply the API eligibility object to a normalized dealer.
 	 *
-	 * @return true|WP_Error
+	 * A verified checkout network dealer is always accepted. When the fallback
+	 * is allowed, a dealer that is still ATF-listed and active is accepted with
+	 * transfer_confirmed set to false so the order records that acceptance and
+	 * license review must be confirmed with the dealer.
+	 *
+	 * @param array<string, mixed> $dealer Normalized dealer.
+	 * @param mixed                $eligibility API eligibility object.
+	 * @param bool                 $allow_unconfirmed Whether the fallback is allowed.
+	 * @return array<string, mixed>|WP_Error
 	 */
-	public static function test_connection(): bool|WP_Error {
-		$result = self::search( '32174', 10, 1 );
-		return is_wp_error( $result ) ? $result : true;
+	public static function apply_eligibility( array $dealer, mixed $eligibility, bool $allow_unconfirmed ): array|WP_Error {
+		$eligibility = is_array( $eligibility ) ? $eligibility : array();
+		$confirmed   = true === ( $eligibility['selectable'] ?? false ) && true === ( $eligibility['licenseVerified'] ?? false );
+		$listed      = true === ( $eligibility['isActive'] ?? false ) && true === ( $eligibility['isAtfListed'] ?? false );
+
+		if ( ! $confirmed && ! ( $allow_unconfirmed && $listed ) ) {
+			return new WP_Error( 'ffl_bridge_dealer_unavailable', __( 'That dealer is not currently selectable. Choose another dealer or contact the store.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		$dealer['license_on_file']    = true === ( $eligibility['licenseOnFile'] ?? false );
+		$dealer['license_verified']   = true === ( $eligibility['licenseVerified'] ?? false );
+		$dealer['checkout_eligible']  = $confirmed;
+		$dealer['transfer_confirmed'] = $confirmed;
+
+		// The detail endpoint has no transferStatus. A dealer with transfers on
+		// record has confirmed them with FFL Bridge.
+		if ( null === ( $dealer['transfer_status'] ?? null ) && ! empty( $dealer['accepts_transfers'] ) ) {
+			$dealer['transfer_status'] = 'confirmed';
+		}
+
+		return $dealer;
 	}
 
 	/**
@@ -222,6 +363,8 @@ final class FFL_Bridge_API_Client {
 			'distance'          => $distance,
 			'accepts_transfers' => true === ( $raw['acceptsTransfers'] ?? false ),
 			'is_active'         => ! array_key_exists( 'isActive', $raw ) || true === $raw['isActive'],
+			'checkout_eligible' => array_key_exists( 'checkoutEligible', $raw ) ? true === $raw['checkoutEligible'] : null,
+			'transfer_status'   => in_array( $raw['transferStatus'] ?? null, array( 'confirmed', 'declined', 'unconfirmed' ), true ) ? $raw['transferStatus'] : null,
 		);
 	}
 
@@ -299,6 +442,10 @@ final class FFL_Bridge_API_Client {
 			return new WP_Error( 'ffl_bridge_dealer_unavailable', __( 'That dealer is no longer available. Search and select another dealer.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
+		if ( 400 === $status && 'LOCATION_NOT_FOUND' === self::error_code( $response ) ) {
+			return new WP_Error( 'ffl_bridge_location_not_found', __( 'That ZIP code could not be located. Check it and try again.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
 		if ( $status < 200 || $status >= 300 ) {
 			self::log( 'warning', 'API returned an unexpected status.', array( 'status' => $status ) );
 			return new WP_Error( 'ffl_bridge_api_error', __( 'FFL Bridge could not complete the request.', 'ffl-bridge-for-woocommerce' ) );
@@ -316,6 +463,18 @@ final class FFL_Bridge_API_Client {
 		}
 
 		return $data;
+	}
+
+	/**
+	 * Read the API error code from an error response body.
+	 *
+	 * @param array<string, mixed> $response HTTP response.
+	 * @return string
+	 */
+	private static function error_code( array $response ): string {
+		$data = json_decode( (string) wp_remote_retrieve_body( $response ), true, 8 );
+		$code = is_array( $data ) && is_array( $data['error'] ?? null ) ? ( $data['error']['code'] ?? '' ) : '';
+		return is_string( $code ) ? $code : '';
 	}
 
 	/**
@@ -343,11 +502,14 @@ final class FFL_Bridge_API_Client {
 	 * @param string $zip ZIP code.
 	 * @param int    $radius Radius.
 	 * @param int    $limit Result limit.
+	 * @param bool   $transfers_only Whether only transfer-accepting dealers were requested.
+	 * @param bool   $include_unconfirmed Whether the unconfirmed tier was requested.
 	 * @return string
 	 */
-	private static function search_cache_key( string $zip, int $radius, int $limit ): string {
+	private static function search_cache_key( string $zip, int $radius, int $limit, bool $transfers_only, bool $include_unconfirmed ): string {
 		$key_scope = hash_hmac( 'sha256', self::get_api_key(), wp_salt( 'auth' ) );
-		return 'ffl_bridge_search_' . hash( 'sha256', $key_scope . '|' . $zip . '|' . $radius . '|' . $limit );
+		$mode      = ( $transfers_only ? 't' : 'a' ) . ( $include_unconfirmed ? 'u' : '' );
+		return 'ffl_bridge_search_v3_' . hash( 'sha256', $key_scope . '|' . $zip . '|' . $radius . '|' . $limit . '|' . $mode );
 	}
 
 	/**

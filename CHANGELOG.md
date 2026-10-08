@@ -4,6 +4,28 @@ All notable changes to FFL Bridge for WooCommerce are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Clear shopper messages when no dealer confirmed to accept transfers is found, with radius advice and wording that depends on whether a dealer is required.
+- A coverage log and dismissible admin notice listing three-digit ZIP areas where shoppers found no confirmed transfer dealer, plus a coverage table on the settings page.
+- An optional "When no confirmed dealer is found" fallback, off by default, that offers nearby listed dealers labeled "Transfer not confirmed". Orders record `_ffl_bridge_transfer_confirmed` and show the warning to staff and customers.
+- A ZIP and radius coverage check in the settings connection test.
+- Support for FFL Bridge search coverage counts, `emptyReason`, the `unconfirmedTier` fallback list, and per-dealer `transferStatus` when the API sends them. Older API responses keep working.
+- A clear message when the API cannot locate a ZIP code.
+
+- Checkout labels that separate the verified checkout network from public directory listings. Directory-only dealers are shown for reference without a select button and never receive a selection handle.
+- A "Dealers shown at checkout" setting to show the verified network with labeled directory listings (default) or the verified network only.
+- A "Store preferred dealers" setting. Dealers whose license numbers are on the list are labeled and listed first in search results. The list stays in WordPress.
+- Network coverage in the settings connection test, from one sample search.
+- A prospect gap review in `docs/prospect-gap-review.md`.
+
+### Changed
+
+- Settings copy explains the public directory and the verified checkout network, and warns that a required selection blocks shoppers with no verified dealer nearby.
+- Removed the unused `FFL_Bridge_API_Client::test_connection()` helper.
+
 ## [1.1.0] - 2026-07-11
 
 ### Security
@@ -30,5 +52,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Initial proof-of-concept checkout selector and WooCommerce order metadata display.
 
+[Unreleased]: https://github.com/ceweldy/ffl-bridge-woocommerce/compare/v1.1.0...HEAD
 [1.1.0]: https://github.com/ceweldy/ffl-bridge-woocommerce/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ceweldy/ffl-bridge-woocommerce/releases/tag/v1.0.0

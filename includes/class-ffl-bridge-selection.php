@@ -49,6 +49,12 @@ final class FFL_Bridge_Selection {
 			'n'   => bin2hex( random_bytes( 12 ) ),
 		);
 
+		// Mark a fallback dealer so selection can apply the unconfirmed rules.
+		// The signature prevents a shopper from adding or removing this flag.
+		if ( FFL_Bridge_Network::NETWORK_UNCONFIRMED === ( $dealer['network'] ?? '' ) ) {
+			$payload['fb'] = 1;
+		}
+
 		$json = wp_json_encode( $payload, JSON_UNESCAPED_SLASHES );
 		if ( ! is_string( $json ) ) {
 			return new WP_Error( 'ffl_bridge_selection_failed', __( 'The dealer selection could not be secured.', 'ffl-bridge-for-woocommerce' ) );
