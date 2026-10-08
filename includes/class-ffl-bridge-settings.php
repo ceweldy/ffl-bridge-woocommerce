@@ -26,6 +26,64 @@ final class FFL_Bridge_Settings {
 		add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
 		add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue_assets' ) );
 		add_action( 'wp_ajax_ffl_bridge_test_connection', array( __CLASS__, 'ajax_test_connection' ) );
+		add_action( 'admin_notices', array( __CLASS__, 'render_hybrid_offer' ) );
+		add_action( 'admin_post_ffl_bridge_hybrid_offer', array( __CLASS__, 'handle_hybrid_offer' ) );
+	}
+
+	/**
+	 * Offer existing confirmed-only stores a one-click switch to hybrid.
+	 *
+	 * @return void
+	 */
+	public static function render_hybrid_offer(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) || ! FFL_Bridge_Network::hybrid_offer_pending() ) {
+			return;
+		}
+
+		$switch = wp_nonce_url( admin_url( 'admin-post.php?action=ffl_bridge_hybrid_offer&choice=switch' ), 'ffl_bridge_hybrid_offer' );
+		$keep   = wp_nonce_url( admin_url( 'admin-post.php?action=ffl_bridge_hybrid_offer&choice=keep' ), 'ffl_bridge_hybrid_offer' );
+		?>
+		<div class="notice notice-info">
+			<p><strong><?php echo esc_html__( 'FFL Bridge: hybrid dealer selection is available.', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html__( 'Your store lets shoppers choose only confirmed dealers, so checkout can show no dealers where network coverage is thin. Hybrid keeps confirmed dealers first and also lets shoppers choose nearby licensed dealers, with a request to send your store a license copy. Orders are never held at checkout.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<p>
+				<a class="button button-primary" href="<?php echo esc_url( $switch ); ?>"><?php echo esc_html__( 'Switch to hybrid', 'ffl-bridge-for-woocommerce' ); ?></a>
+				<a class="button" href="<?php echo esc_url( $keep ); ?>"><?php echo esc_html__( 'Keep confirmed dealers only', 'ffl-bridge-for-woocommerce' ); ?></a>
+			</p>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Apply the store's answer to the hybrid offer.
+	 *
+	 * @return void
+	 */
+	public static function handle_hybrid_offer(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_die( esc_html__( 'You are not allowed to manage these settings.', 'ffl-bridge-for-woocommerce' ), 403 );
+		}
+
+		check_admin_referer( 'ffl_bridge_hybrid_offer' );
+		$choice = isset( $_GET['choice'] ) ? sanitize_key( wp_unslash( $_GET['choice'] ) ) : '';
+		self::apply_hybrid_offer( $choice );
+		wp_safe_redirect( admin_url( 'admin.php?page=' . self::PAGE_SLUG ) );
+		exit;
+	}
+
+	/**
+	 * Record the answer to the hybrid offer.
+	 *
+	 * @param string $choice switch or keep.
+	 * @return void
+	 */
+	public static function apply_hybrid_offer( string $choice ): void {
+		if ( 'switch' === $choice ) {
+			update_option( FFL_Bridge_Network::MODE_OPTION, FFL_Bridge_Network::MODE_HYBRID, false );
+		}
+
+		if ( in_array( $choice, array( 'switch', 'keep' ), true ) ) {
+			update_option( FFL_Bridge_Network::OFFER_OPTION, 'answered', false );
+		}
 	}
 
 	/**
@@ -97,11 +155,29 @@ final class FFL_Bridge_Settings {
 		);
 		register_setting(
 			'ffl_bridge_settings',
-			'ffl_bridge_fallback',
+			FFL_Bridge_Network::MODE_OPTION,
 			array(
 				'type'              => 'string',
-				'sanitize_callback' => array( 'FFL_Bridge_Network', 'sanitize_fallback' ),
-				'default'           => 'no',
+				'sanitize_callback' => array( 'FFL_Bridge_Network', 'sanitize_dealer_mode' ),
+				'default'           => FFL_Bridge_Network::MODE_HYBRID,
+			)
+		);
+		register_setting(
+			'ffl_bridge_settings',
+			FFL_Bridge_Followup::EMAIL_OPTION,
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( 'FFL_Bridge_Followup', 'sanitize_email_setting' ),
+				'default'           => '',
+			)
+		);
+		register_setting(
+			'ffl_bridge_settings',
+			FFL_Bridge_Followup::FAX_OPTION,
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( 'FFL_Bridge_Followup', 'sanitize_fax' ),
+				'default'           => '',
 			)
 		);
 		register_setting(
@@ -276,7 +352,7 @@ final class FFL_Bridge_Settings {
 			wp_send_json_error( array( 'message' => $transfer->get_error_message() ), 400 );
 		}
 
-		// Count what the fallback would offer, using the same rules as checkout.
+		// Count what hybrid mode would offer, using the same rules as checkout.
 		// An older API without the unconfirmed tier needs one unfiltered search,
 		// and only when no confirmed dealer exists.
 		$resolved = FFL_Bridge_Network::resolve(
@@ -352,7 +428,7 @@ final class FFL_Bridge_Settings {
 		if ( null !== $nearby ) {
 			$parts[] = sprintf(
 				/* translators: %d: number of nearby listed dealers. */
-				__( 'Shoppers here cannot select a confirmed dealer. %d nearby dealers could be offered as unconfirmed if you turn on the fallback.', 'ffl-bridge-for-woocommerce' ),
+				__( 'Shoppers here cannot select a confirmed dealer. %d nearby dealers could be offered as unconfirmed in hybrid dealer selection.', 'ffl-bridge-for-woocommerce' ),
 				$nearby
 			);
 		}
@@ -375,7 +451,9 @@ final class FFL_Bridge_Settings {
 		$selected_categories = self::sanitize_categories( get_option( 'ffl_bridge_categories', array() ) );
 		$result_scope        = FFL_Bridge_Network::get_result_scope();
 		$preferred_licenses  = FFL_Bridge_Network::get_preferred_licenses();
-		$fallback            = FFL_Bridge_Network::fallback_enabled() ? 'yes' : 'no';
+		$dealer_mode         = FFL_Bridge_Network::get_dealer_mode();
+		$license_email       = FFL_Bridge_Followup::sanitize_email_setting( get_option( FFL_Bridge_Followup::EMAIL_OPTION, '' ) );
+		$license_fax         = FFL_Bridge_Followup::contact_fax();
 		$coverage_log        = FFL_Bridge_Coverage::get_log();
 		$constant_key        = defined( 'FFL_BRIDGE_API_KEY' );
 		$key_suffix          = FFL_Bridge_API_Client::get_key_suffix();
@@ -452,13 +530,27 @@ final class FFL_Bridge_Settings {
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="ffl_bridge_fallback"><?php echo esc_html__( 'When no confirmed dealer is found', 'ffl-bridge-for-woocommerce' ); ?></label></th>
+						<th scope="row"><label for="ffl_bridge_dealer_mode"><?php echo esc_html__( 'Dealer selection', 'ffl-bridge-for-woocommerce' ); ?></label></th>
 						<td>
-							<select id="ffl_bridge_fallback" name="ffl_bridge_fallback">
-								<option value="no" <?php selected( $fallback, 'no' ); ?>><?php echo esc_html__( 'Show a message only (default)', 'ffl-bridge-for-woocommerce' ); ?></option>
-								<option value="yes" <?php selected( $fallback, 'yes' ); ?>><?php echo esc_html__( 'Also offer nearby dealers labeled "Transfer not confirmed"', 'ffl-bridge-for-woocommerce' ); ?></option>
+							<select id="ffl_bridge_dealer_mode" name="ffl_bridge_dealer_mode">
+								<option value="hybrid" <?php selected( $dealer_mode, FFL_Bridge_Network::MODE_HYBRID ); ?>><?php echo esc_html__( 'Hybrid: confirmed dealers first, plus nearby dealers with license follow-up (recommended)', 'ffl-bridge-for-woocommerce' ); ?></option>
+								<option value="confirmed_only" <?php selected( $dealer_mode, FFL_Bridge_Network::MODE_CONFIRMED_ONLY ); ?>><?php echo esc_html__( 'Confirmed dealers only', 'ffl-bridge-for-woocommerce' ); ?></option>
 							</select>
-							<p class="description"><?php echo esc_html__( 'Off by default. When on, and a search finds no dealer confirmed to accept transfers, shoppers can choose a nearby ATF-listed dealer. Each one is labeled "Transfer not confirmed" and tells the shopper to contact the dealer. The order is marked "Transfer not confirmed" so staff confirm acceptance and get a license copy before shipping. This uses one extra search only when the first search finds nothing.', 'ffl-bridge-for-woocommerce' ); ?></p>
+							<p class="description"><?php echo esc_html__( 'Hybrid lists dealers in the verified checkout network first, then nearby ATF-listed dealers labeled "License not verified" or "Transfer not confirmed". Shoppers can select any of them, so checkout is never empty when network coverage is thin. After choosing an unconfirmed dealer, the shopper is asked to have the dealer send the store a license copy, and the order is marked for follow-up. Dealers that declined transfers are never shown. Confirmed dealers only lets shoppers select verified network dealers alone.', 'ffl-bridge-for-woocommerce' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="ffl_bridge_license_email"><?php echo esc_html__( 'License copy email', 'ffl-bridge-for-woocommerce' ); ?></label></th>
+						<td>
+							<input type="email" id="ffl_bridge_license_email" name="ffl_bridge_license_email" class="regular-text" value="<?php echo esc_attr( $license_email ); ?>" placeholder="<?php echo esc_attr( (string) get_option( 'admin_email', '' ) ); ?>">
+							<p class="description"><?php echo esc_html__( 'Where shoppers ask their dealer to email a license copy. Leave blank to use the site admin email.', 'ffl-bridge-for-woocommerce' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="ffl_bridge_license_fax"><?php echo esc_html__( 'License copy fax (optional)', 'ffl-bridge-for-woocommerce' ); ?></label></th>
+						<td>
+							<input type="text" id="ffl_bridge_license_fax" name="ffl_bridge_license_fax" class="regular-text" value="<?php echo esc_attr( $license_fax ); ?>" inputmode="tel" autocomplete="off">
+							<p class="description"><?php echo esc_html__( 'Shown to shoppers as a second way for the dealer to send the license copy.', 'ffl-bridge-for-woocommerce' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -532,7 +624,7 @@ final class FFL_Bridge_Settings {
 						<tr>
 							<th scope="col"><?php echo esc_html__( 'ZIP area', 'ffl-bridge-for-woocommerce' ); ?></th>
 							<th scope="col"><?php echo esc_html__( 'Searches without a confirmed dealer', 'ffl-bridge-for-woocommerce' ); ?></th>
-							<th scope="col"><?php echo esc_html__( 'Fallback dealers shown', 'ffl-bridge-for-woocommerce' ); ?></th>
+							<th scope="col"><?php echo esc_html__( 'Hybrid dealers shown', 'ffl-bridge-for-woocommerce' ); ?></th>
 							<th scope="col"><?php echo esc_html__( 'Largest radius searched', 'ffl-bridge-for-woocommerce' ); ?></th>
 							<th scope="col"><?php echo esc_html__( 'Last search', 'ffl-bridge-for-woocommerce' ); ?></th>
 							<th scope="col"><?php echo esc_html__( 'API reason', 'ffl-bridge-for-woocommerce' ); ?></th>

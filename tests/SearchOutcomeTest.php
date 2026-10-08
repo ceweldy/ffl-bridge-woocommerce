@@ -175,14 +175,20 @@ final class SearchOutcomeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( array( 'No Status Field' ), array_column( $resolved['dealers'], 'name' ) );
 	}
 
-	public function test_eligibility_derives_confirmed_transfer_status_from_detail(): void {
-		$dealer                      = $this->dealer();
-		$dealer['accepts_transfers'] = true;
+	public function test_eligibility_keeps_transfer_confirmation_separate_from_license(): void {
+		$eligibility                     = $this->eligibility( false );
+		$eligibility['acceptsTransfers'] = true;
 
-		$allowed = FFL_Bridge_API_Client::apply_eligibility( $dealer, $this->eligibility( false ), true );
+		$allowed = FFL_Bridge_API_Client::apply_eligibility( $this->dealer(), $eligibility, true );
 
 		$this->assertSame( 'confirmed', $allowed['transfer_status'] );
-		$this->assertFalse( $allowed['transfer_confirmed'] );
+		$this->assertTrue( $allowed['transfer_confirmed'] );
+		$this->assertFalse( $allowed['license_verified'] );
+		$this->assertFalse( $allowed['checkout_verified'] );
+
+		$none = FFL_Bridge_API_Client::apply_eligibility( $this->dealer(), $this->eligibility( false ), true );
+		$this->assertSame( 'unconfirmed', $none['transfer_status'] );
+		$this->assertFalse( $none['transfer_confirmed'] );
 	}
 
 	public function test_eligibility_accepts_verified_network_dealer(): void {
@@ -272,8 +278,8 @@ final class SearchOutcomeTest extends FFL_Bridge_TestCase {
 	public function test_fallback_notice_tells_shopper_to_contact_dealer(): void {
 		$notice = FFL_Bridge_Checkout::search_notice( 'fallback', '48047', 100, true, null, '' );
 
-		$this->assertStringContainsString( 'transfer acceptance is not confirmed', $notice );
-		$this->assertStringContainsString( 'Contact the dealer to confirm', $notice );
+		$this->assertStringContainsString( 'You can still choose one of the nearby licensed dealers below.', $notice );
+		$this->assertStringContainsString( 'contact the dealer to confirm they will accept the transfer', $notice );
 		$this->assertStringNotContainsString( 'Try a larger radius', $notice );
 	}
 

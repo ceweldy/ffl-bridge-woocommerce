@@ -88,7 +88,7 @@ final class FFL_Bridge_API_Client {
 	 * By default only dealers listed as accepting transfers are requested. With
 	 * $include_unconfirmed, the API also returns its separate unconfirmed tier
 	 * (nearby dealers with no transfer acceptance on record), which feeds the
-	 * merchant-enabled fallback without a second request. APIs that predate
+	 * hybrid dealer list without a second request. APIs that predate
 	 * the tier ignore the parameter, and 'unconfirmed' is then null.
 	 *
 	 * @param string $zip ZIP code.
@@ -252,7 +252,7 @@ final class FFL_Bridge_API_Client {
 	 * @param string $dealer_id Dealer UUID.
 	 * @param bool   $allow_unconfirmed Accept a listed, active dealer that is not
 	 *                                  in the verified checkout network. Used only
-	 *                                  for the merchant-enabled fallback.
+	 *                                  for hybrid dealer selection.
 	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function get_dealer( string $dealer_id, bool $allow_unconfirmed = false ): array|WP_Error {
@@ -281,37 +281,101 @@ final class FFL_Bridge_API_Client {
 	/**
 	 * Apply the API eligibility object to a normalized dealer.
 	 *
-	 * A verified checkout network dealer is always accepted. When the fallback
-	 * is allowed, a dealer that is still ATF-listed and active is accepted with
-	 * transfer_confirmed set to false so the order records that acceptance and
-	 * license review must be confirmed with the dealer.
+	 * A verified checkout network dealer is always accepted. In hybrid mode a
+	 * dealer that is still ATF-listed and active is accepted as well. Three
+	 * facts are recorded separately:
+	 * - checkout_verified: in the verified checkout network (selectable).
+	 * - transfer_confirmed: the dealer confirmed transfers with FFL Bridge.
+	 * - license_verified: FFL Bridge verified a current license copy.
 	 *
 	 * @param array<string, mixed> $dealer Normalized dealer.
 	 * @param mixed                $eligibility API eligibility object.
-	 * @param bool                 $allow_unconfirmed Whether the fallback is allowed.
+	 * @param bool                 $allow_unconfirmed Whether hybrid selection is allowed.
 	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function apply_eligibility( array $dealer, mixed $eligibility, bool $allow_unconfirmed ): array|WP_Error {
 		$eligibility = is_array( $eligibility ) ? $eligibility : array();
-		$confirmed   = true === ( $eligibility['selectable'] ?? false ) && true === ( $eligibility['licenseVerified'] ?? false );
+		$verified    = true === ( $eligibility['selectable'] ?? false ) && true === ( $eligibility['licenseVerified'] ?? false );
 		$listed      = true === ( $eligibility['isActive'] ?? false ) && true === ( $eligibility['isAtfListed'] ?? false );
 
-		if ( ! $confirmed && ! ( $allow_unconfirmed && $listed ) ) {
+		if ( ! $verified && ! ( $allow_unconfirmed && $listed ) ) {
 			return new WP_Error( 'ffl_bridge_dealer_unavailable', __( 'That dealer is not currently selectable. Choose another dealer or contact the store.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
+		$accepts = array_key_exists( 'acceptsTransfers', $eligibility )
+			? true === $eligibility['acceptsTransfers']
+			: ! empty( $dealer['accepts_transfers'] );
+
 		$dealer['license_on_file']    = true === ( $eligibility['licenseOnFile'] ?? false );
 		$dealer['license_verified']   = true === ( $eligibility['licenseVerified'] ?? false );
-		$dealer['checkout_eligible']  = $confirmed;
-		$dealer['transfer_confirmed'] = $confirmed;
+		$dealer['checkout_eligible']  = $verified;
+		$dealer['checkout_verified']  = $verified;
+		$dealer['transfer_confirmed'] = $verified || $accepts;
 
-		// The detail endpoint has no transferStatus. A dealer with transfers on
-		// record has confirmed them with FFL Bridge.
-		if ( null === ( $dealer['transfer_status'] ?? null ) && ! empty( $dealer['accepts_transfers'] ) ) {
-			$dealer['transfer_status'] = 'confirmed';
+		// The detail endpoint has no transferStatus, so derive it.
+		if ( null === ( $dealer['transfer_status'] ?? null ) ) {
+			$dealer['transfer_status'] = $dealer['transfer_confirmed'] ? 'confirmed' : 'unconfirmed';
 		}
 
 		return $dealer;
+	}
+
+	/**
+	 * Report a store's transfer confirmation to FFL Bridge.
+	 *
+	 * Calls POST /api/v1/dealers/{dealerId}/transfer-confirmations. The
+	 * request is sent once, without retries, so a confirmation is never
+	 * recorded twice. A 404 means the API does not offer the endpoint yet.
+	 *
+	 * @param string                     $dealer_id Dealer UUID.
+	 * @param string                     $license License number.
+	 * @param string                     $order_reference Store order number.
+	 * @param string                     $note Optional note from store staff.
+	 * @param array<string, string>|null $file Optional license file: filename, contentType, path.
+	 * @return array<string, mixed>|WP_Error Response data on success.
+	 */
+	public static function confirm_transfer( string $dealer_id, string $license, string $order_reference, string $note = '', ?array $file = null ): array|WP_Error {
+		if ( 1 !== preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i', $dealer_id ) ) {
+			return new WP_Error( 'ffl_bridge_invalid_dealer', __( 'The order has no FFL Bridge dealer identifier.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		$body = array(
+			'licenseNumber'    => $license,
+			'acceptsTransfers' => true,
+			'orderReference'   => $order_reference,
+		);
+		if ( '' !== $note ) {
+			$body['note'] = $note;
+		}
+
+		if ( null !== $file && is_readable( $file['path'] ?? '' ) ) {
+			$contents = file_get_contents( $file['path'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local private file, not a remote request.
+			if ( false !== $contents ) {
+				$body['licenseFile'] = array(
+					'filename'      => $file['filename'] ?? 'license',
+					'contentType'   => $file['contentType'] ?? 'application/octet-stream',
+					'contentBase64' => base64_encode( $contents ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- JSON file transport, not obfuscation.
+				);
+			}
+		}
+
+		$response = self::send( 'POST', '/dealers/' . rawurlencode( strtolower( $dealer_id ) ) . '/transfer-confirmations', array(), $body );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		if ( 404 === $status ) {
+			return new WP_Error( 'ffl_bridge_endpoint_missing', __( 'FFL Bridge does not accept transfer confirmations yet.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		$data = json_decode( (string) wp_remote_retrieve_body( $response ), true, 16 );
+		if ( $status < 200 || $status >= 300 || ! is_array( $data ) || true !== ( $data['success'] ?? false ) ) {
+			self::log( 'warning', 'Transfer confirmation was not accepted.', array( 'status' => $status ) );
+			return new WP_Error( 'ffl_bridge_confirmation_failed', __( 'FFL Bridge did not accept the transfer confirmation.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		return is_array( $data['data'] ?? null ) ? $data['data'] : array();
 	}
 
 	/**
@@ -376,53 +440,12 @@ final class FFL_Bridge_API_Client {
 	 * @return array<string, mixed>|WP_Error
 	 */
 	private static function request( string $path, array $query = array() ): array|WP_Error {
-		$api_key = self::get_api_key();
-		if ( ! self::is_valid_api_key( $api_key ) ) {
-			return new WP_Error( 'ffl_bridge_not_configured', __( 'FFL Bridge is not configured. Ask the store administrator for help.', 'ffl-bridge-for-woocommerce' ) );
-		}
-
-		$origin = self::get_site_origin();
-		if ( is_wp_error( $origin ) ) {
-			return $origin;
-		}
-
-		$url = self::API_BASE_URL . $path;
-		if ( ! empty( $query ) ) {
-			$url = add_query_arg( $query, $url );
-		}
-
-		$args = array(
-			'timeout'             => self::TIMEOUT,
-			'redirection'         => 0,
-			'sslverify'           => true,
-			'limit_response_size' => self::MAX_BODY_SIZE,
-			'headers'             => array(
-				'Accept'        => 'application/json',
-				'Authorization' => 'Bearer ' . $api_key,
-				'Origin'        => $origin,
-				'Referer'       => trailingslashit( $origin ),
-				'User-Agent'    => 'FFL-Bridge-WooCommerce/' . FFL_BRIDGE_VERSION . '; ' . $origin,
-			),
-		);
-
-		$response = wp_safe_remote_get( $url, $args );
+		$response = self::send( 'GET', $path, $query );
 		if ( is_wp_error( $response ) ) {
-			$response = wp_safe_remote_get( $url, $args );
-		}
-
-		if ( is_wp_error( $response ) ) {
-			self::log( 'warning', 'API transport failure.' );
-			return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ) );
+			return $response;
 		}
 
 		$status = (int) wp_remote_retrieve_response_code( $response );
-		if ( in_array( $status, array( 502, 503, 504 ), true ) ) {
-			$response = wp_safe_remote_get( $url, $args );
-			if ( is_wp_error( $response ) ) {
-				return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ) );
-			}
-			$status = (int) wp_remote_retrieve_response_code( $response );
-		}
 
 		if ( 401 === $status ) {
 			self::log( 'error', 'API credential rejected.' );
@@ -475,6 +498,72 @@ final class FFL_Bridge_API_Client {
 		$data = json_decode( (string) wp_remote_retrieve_body( $response ), true, 8 );
 		$code = is_array( $data ) && is_array( $data['error'] ?? null ) ? ( $data['error']['code'] ?? '' ) : '';
 		return is_string( $code ) ? $code : '';
+	}
+
+	/**
+	 * Send an authenticated request to a fixed FFL Bridge path.
+	 *
+	 * GET requests are retried once on a transport error or a 502, 503, or
+	 * 504 response. Other methods are sent once.
+	 *
+	 * @param string               $method GET or POST.
+	 * @param string               $path API path beneath /api/v1.
+	 * @param array<string, mixed> $query Optional query string.
+	 * @param array<string, mixed> $body Optional JSON body for POST.
+	 * @return array<string, mixed>|WP_Error Raw HTTP response.
+	 */
+	private static function send( string $method, string $path, array $query = array(), array $body = array() ): array|WP_Error {
+		$api_key = self::get_api_key();
+		if ( ! self::is_valid_api_key( $api_key ) ) {
+			return new WP_Error( 'ffl_bridge_not_configured', __( 'FFL Bridge is not configured. Ask the store administrator for help.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		$origin = self::get_site_origin();
+		if ( is_wp_error( $origin ) ) {
+			return $origin;
+		}
+
+		$url = self::API_BASE_URL . $path;
+		if ( ! empty( $query ) ) {
+			$url = add_query_arg( $query, $url );
+		}
+
+		$args = array(
+			'timeout'             => 'GET' === $method ? self::TIMEOUT : 20,
+			'redirection'         => 0,
+			'sslverify'           => true,
+			'limit_response_size' => self::MAX_BODY_SIZE,
+			'headers'             => array(
+				'Accept'        => 'application/json',
+				'Authorization' => 'Bearer ' . $api_key,
+				'Origin'        => $origin,
+				'Referer'       => trailingslashit( $origin ),
+				'User-Agent'    => 'FFL-Bridge-WooCommerce/' . FFL_BRIDGE_VERSION . '; ' . $origin,
+			),
+		);
+
+		if ( 'GET' !== $method ) {
+			$args['headers']['Content-Type'] = 'application/json';
+			$args['body']                    = (string) wp_json_encode( $body );
+			$response                        = wp_safe_remote_post( $url, $args );
+			if ( is_wp_error( $response ) ) {
+				self::log( 'warning', 'API transport failure.' );
+				return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ) );
+			}
+			return $response;
+		}
+
+		$response = wp_safe_remote_get( $url, $args );
+		if ( is_wp_error( $response ) || in_array( (int) wp_remote_retrieve_response_code( $response ), array( 502, 503, 504 ), true ) ) {
+			$response = wp_safe_remote_get( $url, $args );
+		}
+
+		if ( is_wp_error( $response ) ) {
+			self::log( 'warning', 'API transport failure.' );
+			return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		return $response;
 	}
 
 	/**

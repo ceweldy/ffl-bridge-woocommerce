@@ -36,9 +36,13 @@ final class FFL_Bridge_Coverage {
 	/**
 	 * Record a search that found no confirmed transfer dealer.
 	 *
+	 * Events are stored in one bucket per ZIP area and UTC day. A bucket is
+	 * dropped as soon as its day starts more than 30 days ago, so every event
+	 * expires on its own schedule even when an area keeps getting new ones.
+	 *
 	 * @param string   $zip Five-digit ZIP code.
 	 * @param int      $radius Search radius in miles.
-	 * @param bool     $fallback_shown Whether fallback dealers were shown.
+	 * @param bool     $fallback_shown Whether hybrid dealers were shown.
 	 * @param string   $reason Optional API zero-result reason code.
 	 * @param int|null $now Optional timestamp for testing.
 	 * @return void
@@ -48,10 +52,11 @@ final class FFL_Bridge_Coverage {
 			return;
 		}
 
-		$now   = $now ?? time();
-		$log   = self::get_log( $now );
-		$area  = $match[1];
-		$entry = $log['areas'][ $area ] ?? array(
+		$now     = $now ?? time();
+		$buckets = self::stored_buckets( $now );
+		$area    = 'a' . $match[1];
+		$day     = 'd' . intdiv( $now, DAY_IN_SECONDS );
+		$bucket  = $buckets[ $area ][ $day ] ?? array(
 			'count'      => 0,
 			'fallback'   => 0,
 			'max_radius' => 0,
@@ -60,62 +65,119 @@ final class FFL_Bridge_Coverage {
 			'reason'     => '',
 		);
 
-		++$entry['count'];
-		$entry['fallback']  += $fallback_shown ? 1 : 0;
-		$entry['max_radius'] = max( (int) $entry['max_radius'], $radius );
-		$entry['last']       = $now;
+		++$bucket['count'];
+		$bucket['fallback']  += $fallback_shown ? 1 : 0;
+		$bucket['max_radius'] = max( (int) $bucket['max_radius'], $radius );
+		$bucket['last']       = $now;
 		if ( '' !== $reason ) {
-			$entry['reason'] = $reason;
+			$bucket['reason'] = $reason;
 		}
 
-		$log['areas'][ $area ] = $entry;
-		uasort( $log['areas'], static fn ( array $a, array $b ): int => $b['last'] <=> $a['last'] );
-		$log['areas'] = array_slice( $log['areas'], 0, self::MAX_AREAS, true );
-		$log['last']  = $now;
+		$buckets[ $area ][ $day ] = $bucket;
+		uasort( $buckets, static fn ( array $a, array $b ): int => self::latest( $b ) <=> self::latest( $a ) );
 
-		update_option( self::OPTION, $log, false );
+		update_option(
+			self::OPTION,
+			array(
+				'version' => 2,
+				'areas'   => array_slice( $buckets, 0, self::MAX_AREAS, true ),
+			),
+			false
+		);
 	}
 
 	/**
-	 * Return the coverage log with entries outside the window removed.
+	 * Return per-area totals for events inside the window.
 	 *
 	 * @param int|null $now Optional timestamp for testing.
-	 * @return array{areas: array<int|string, array<string, mixed>>, last: int}
+	 * @return array{areas: array<string, array<string, mixed>>, last: int}
 	 */
 	public static function get_log( ?int $now = null ): array {
-		$now    = $now ?? time();
-		$stored = get_option( self::OPTION, array() );
-		$areas  = array();
-
-		if ( is_array( $stored ) && isset( $stored['areas'] ) && is_array( $stored['areas'] ) ) {
-			foreach ( $stored['areas'] as $area => $entry ) {
-				if (
-					1 === preg_match( '/\A\d{3}\z/', (string) $area ) &&
-					is_array( $entry ) &&
-					isset( $entry['count'], $entry['last'] ) &&
-					(int) $entry['last'] > $now - self::WINDOW
-				) {
-					$areas[ (string) $area ] = array(
-						'count'      => absint( $entry['count'] ),
-						'fallback'   => absint( $entry['fallback'] ?? 0 ),
-						'max_radius' => absint( $entry['max_radius'] ?? 0 ),
-						'first'      => absint( $entry['first'] ?? $entry['last'] ),
-						'last'       => absint( $entry['last'] ),
-						'reason'     => is_string( $entry['reason'] ?? null ) ? $entry['reason'] : '',
-					);
+		$areas = array();
+		$last  = 0;
+		foreach ( self::stored_buckets( $now ?? time() ) as $key => $days ) {
+			$entry = array(
+				'count'      => 0,
+				'fallback'   => 0,
+				'max_radius' => 0,
+				'first'      => PHP_INT_MAX,
+				'last'       => 0,
+				'reason'     => '',
+			);
+			foreach ( $days as $bucket ) {
+				$entry['count']     += $bucket['count'];
+				$entry['fallback']  += $bucket['fallback'];
+				$entry['max_radius'] = max( $entry['max_radius'], $bucket['max_radius'] );
+				$entry['first']      = min( $entry['first'], $bucket['first'] );
+				if ( $bucket['last'] >= $entry['last'] ) {
+					$entry['last']   = $bucket['last'];
+					$entry['reason'] = '' !== $bucket['reason'] ? $bucket['reason'] : $entry['reason'];
 				}
 			}
-		}
 
-		$last = 0;
-		foreach ( $areas as $entry ) {
-			$last = max( $last, $entry['last'] );
+			$areas[ substr( $key, 1 ) ] = $entry;
+			$last                       = max( $last, $entry['last'] );
 		}
 
 		return array(
 			'areas' => $areas,
 			'last'  => $last,
 		);
+	}
+
+	/**
+	 * Read stored day buckets, dropping malformed entries and expired days.
+	 *
+	 * Logs written by the earlier single-aggregate format are discarded,
+	 * because their events cannot be expired individually.
+	 *
+	 * @param int $now Current timestamp.
+	 * @return array<string, array<string, array{count: int, fallback: int, max_radius: int, first: int, last: int, reason: string}>>
+	 */
+	private static function stored_buckets( int $now ): array {
+		$stored = get_option( self::OPTION, array() );
+		if ( ! is_array( $stored ) || 2 !== ( $stored['version'] ?? null ) || ! is_array( $stored['areas'] ?? null ) ) {
+			return array();
+		}
+
+		$oldest  = $now - self::WINDOW;
+		$buckets = array();
+		foreach ( $stored['areas'] as $area => $days ) {
+			if ( 1 !== preg_match( '/\Aa\d{3}\z/', (string) $area ) || ! is_array( $days ) ) {
+				continue;
+			}
+
+			foreach ( $days as $day => $bucket ) {
+				if ( 1 !== preg_match( '/\Ad(\d{1,7})\z/', (string) $day, $match ) || ! is_array( $bucket ) || ! isset( $bucket['count'], $bucket['last'] ) ) {
+					continue;
+				}
+
+				if ( (int) $match[1] * DAY_IN_SECONDS < $oldest ) {
+					continue;
+				}
+
+				$buckets[ (string) $area ][ (string) $day ] = array(
+					'count'      => absint( $bucket['count'] ),
+					'fallback'   => absint( $bucket['fallback'] ?? 0 ),
+					'max_radius' => absint( $bucket['max_radius'] ?? 0 ),
+					'first'      => absint( $bucket['first'] ?? $bucket['last'] ),
+					'last'       => absint( $bucket['last'] ),
+					'reason'     => is_string( $bucket['reason'] ?? null ) ? $bucket['reason'] : '',
+				);
+			}
+		}
+
+		return $buckets;
+	}
+
+	/**
+	 * Return the most recent event time in an area's buckets.
+	 *
+	 * @param array<string, array<string, int|string>> $days Day buckets.
+	 * @return int
+	 */
+	private static function latest( array $days ): int {
+		return (int) max( array_column( $days, 'last' ) );
 	}
 
 	/**
@@ -168,7 +230,6 @@ final class FFL_Bridge_Coverage {
 			return;
 		}
 
-		// PHP stores numeric area keys such as 480 as integers.
 		$areas = array_map( static fn ( int|string $area ): string => $area . 'xx', array_slice( array_keys( $log['areas'] ), 0, 5 ) );
 		$text  = sprintf(
 			/* translators: 1: number of searches, 2: comma-separated ZIP areas such as 480xx. */

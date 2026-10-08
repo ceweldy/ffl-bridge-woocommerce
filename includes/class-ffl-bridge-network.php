@@ -22,8 +22,9 @@ final class FFL_Bridge_Network {
 	public const NETWORK_UNKNOWN   = 'unknown';
 
 	/**
-	 * A nearby listed dealer offered only by the merchant-enabled fallback.
-	 * FFL Bridge has not confirmed that it accepts transfers.
+	 * A nearby listed dealer offered in hybrid mode. It is not in the verified
+	 * checkout network: its transfer acceptance, its license copy, or both
+	 * still need follow-up.
 	 */
 	public const NETWORK_UNCONFIRMED = 'unconfirmed';
 
@@ -31,6 +32,13 @@ final class FFL_Bridge_Network {
 	public const SCOPE_VERIFIED = 'verified';
 
 	public const MAX_PREFERRED = 100;
+
+	public const MODE_OPTION         = 'ffl_bridge_dealer_mode';
+	public const OFFER_OPTION        = 'ffl_bridge_hybrid_offer';
+	public const MODE_HYBRID         = 'hybrid';
+	public const MODE_CONFIRMED_ONLY = 'confirmed_only';
+	public const SELECTION_NETWORK   = 'verified_network';
+	public const SELECTION_HYBRID    = 'hybrid';
 
 	public const OUTCOME_CONFIRMED = 'confirmed';
 	public const OUTCOME_FALLBACK  = 'fallback';
@@ -46,22 +54,73 @@ final class FFL_Bridge_Network {
 	}
 
 	/**
-	 * Determine whether the merchant enabled the unconfirmed-dealer fallback.
+	 * Return the dealer selection mode.
 	 *
-	 * @return bool
+	 * Hybrid lets shoppers select any nearby ATF-listed dealer that has not
+	 * declined transfers, with confirmed dealers listed first and the rest
+	 * labeled for follow-up. Confirmed-only offers just the verified network.
+	 * A missing option means hybrid, the default for new installs. Existing
+	 * installs get an explicit value from maybe_migrate().
+	 *
+	 * @return string
 	 */
-	public static function fallback_enabled(): bool {
-		return 'yes' === self::sanitize_fallback( get_option( 'ffl_bridge_fallback', 'no' ) );
+	public static function get_dealer_mode(): string {
+		return self::sanitize_dealer_mode( get_option( self::MODE_OPTION, self::MODE_HYBRID ) );
 	}
 
 	/**
-	 * Sanitize the fallback setting. It is off unless explicitly enabled.
+	 * Determine whether shoppers may select dealers that need follow-up.
+	 *
+	 * @return bool
+	 */
+	public static function hybrid_enabled(): bool {
+		return self::MODE_HYBRID === self::get_dealer_mode();
+	}
+
+	/**
+	 * Sanitize the dealer selection mode.
 	 *
 	 * @param mixed $input Raw value.
 	 * @return string
 	 */
-	public static function sanitize_fallback( mixed $input ): string {
-		return 'yes' === $input ? 'yes' : 'no';
+	public static function sanitize_dealer_mode( mixed $input ): string {
+		return self::MODE_CONFIRMED_ONLY === $input ? self::MODE_CONFIRMED_ONLY : self::MODE_HYBRID;
+	}
+
+	/**
+	 * Give an install without a saved dealer mode an explicit one.
+	 *
+	 * A site that has never stored plugin settings is new and gets hybrid.
+	 * A site that already had settings keeps its saved behavior: the earlier
+	 * fallback setting maps to hybrid when it was on and to confirmed-only
+	 * otherwise, and a confirmed-only site gets an admin offer to switch.
+	 *
+	 * @return void
+	 */
+	public static function maybe_migrate(): void {
+		if ( false !== get_option( self::MODE_OPTION, false ) ) {
+			return;
+		}
+
+		if ( false === get_option( 'ffl_bridge_settings_version', false ) ) {
+			update_option( self::MODE_OPTION, self::MODE_HYBRID, false );
+			return;
+		}
+
+		$mode = 'yes' === get_option( 'ffl_bridge_fallback', 'no' ) ? self::MODE_HYBRID : self::MODE_CONFIRMED_ONLY;
+		update_option( self::MODE_OPTION, $mode, false );
+		if ( self::MODE_CONFIRMED_ONLY === $mode ) {
+			update_option( self::OFFER_OPTION, 'pending', false );
+		}
+	}
+
+	/**
+	 * Determine whether the switch-to-hybrid offer should be shown.
+	 *
+	 * @return bool
+	 */
+	public static function hybrid_offer_pending(): bool {
+		return 'pending' === get_option( self::OFFER_OPTION, '' ) && ! self::hybrid_enabled();
 	}
 
 	/**
@@ -221,14 +280,14 @@ final class FFL_Bridge_Network {
 	}
 
 	/**
-	 * Collect fallback candidates without duplicates or declined dealers.
+	 * Collect hybrid candidates without duplicates or declined dealers.
 	 *
 	 * @param array<int, array<string, mixed>> $found Transfer-accepting results.
 	 * @param mixed                            $tier The API unconfirmed tier, or null when absent.
 	 * @param callable|null                    $fetch_nearby Unfiltered search for older APIs.
 	 * @return array<int, array<string, mixed>>
 	 */
-	private static function fallback_candidates( array $found, mixed $tier, ?callable $fetch_nearby ): array {
+	private static function hybrid_candidates( array $found, mixed $tier, ?callable $fetch_nearby ): array {
 		$candidates = $found;
 		if ( is_array( $tier ) ) {
 			$candidates = array_merge( $candidates, $tier );
@@ -249,79 +308,117 @@ final class FFL_Bridge_Network {
 	}
 
 	/**
-	 * Mark nearby dealers as selectable fallback dealers whose transfer
-	 * acceptance is not confirmed.
+	 * Prepare the hybrid list, in which every candidate is selectable.
 	 *
-	 * Verified network dealers keep their classification in case the API
-	 * returns one here. Store-preferred dealers lead, and the API order is
-	 * otherwise preserved.
+	 * Order: verified network dealers (and unknown ones, from an API without
+	 * the flag), then dealers that confirmed transfers but have no verified
+	 * license copy, then dealers whose transfer acceptance is unconfirmed.
+	 * Store-preferred dealers lead each group, and the API order is otherwise
+	 * preserved.
 	 *
 	 * @param array<int, array<string, mixed>> $dealers Normalized dealers.
 	 * @param array<int, string>               $preferred Preferred license numbers.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public static function prepare_fallback( array $dealers, array $preferred ): array {
+	public static function prepare_hybrid( array $dealers, array $preferred ): array {
 		$prepared = self::prepare_results( $dealers, self::SCOPE_ALL, $preferred );
-		foreach ( $prepared as &$dealer ) {
-			if ( self::NETWORK_VERIFIED !== $dealer['network'] ) {
+		foreach ( $prepared as $position => &$dealer ) {
+			if ( self::NETWORK_DIRECTORY === $dealer['network'] ) {
 				$dealer['network'] = self::NETWORK_UNCONFIRMED;
 			}
 			$dealer['selectable'] = true;
+			$dealer['rank']       = self::hybrid_rank( $dealer );
+			$dealer['position']   = $position;
 		}
 		unset( $dealer );
 
 		usort(
 			$prepared,
-			static fn ( array $a, array $b ): int => (int) ! $a['store_preferred'] <=> (int) ! $b['store_preferred']
+			static fn ( array $a, array $b ): int => array( $a['rank'], ! $a['store_preferred'], $a['position'] )
+				<=> array( $b['rank'], ! $b['store_preferred'], $b['position'] )
 		);
 
-		return $prepared;
+		return array_map(
+			static function ( array $dealer ): array {
+				unset( $dealer['rank'], $dealer['position'] );
+				return $dealer;
+			},
+			$prepared
+		);
+	}
+
+	/**
+	 * Rank a dealer for the hybrid list.
+	 *
+	 * @param array<string, mixed> $dealer Prepared dealer.
+	 * @return int
+	 */
+	private static function hybrid_rank( array $dealer ): int {
+		if ( self::NETWORK_UNCONFIRMED !== $dealer['network'] ) {
+			return 0;
+		}
+
+		return 'confirmed' === ( $dealer['transfer_status'] ?? null ) ? 1 : 2;
+	}
+
+	/**
+	 * Describe what a selected dealer still needs.
+	 *
+	 * Transfer acceptance and license verification are independent facts, so
+	 * a dealer can have confirmed transfers without a verified license copy.
+	 *
+	 * @param array<string, mixed> $dealer Canonical or prepared dealer.
+	 * @return string One of verified, license_unverified, transfer_unconfirmed.
+	 */
+	public static function follow_up_state( array $dealer ): string {
+		if ( ! empty( $dealer['checkout_verified'] ) || self::NETWORK_VERIFIED === ( $dealer['network'] ?? '' ) ) {
+			return 'verified';
+		}
+
+		return ! empty( $dealer['transfer_confirmed'] ) || 'confirmed' === ( $dealer['transfer_status'] ?? null )
+			? 'license_unverified'
+			: 'transfer_unconfirmed';
 	}
 
 	/**
 	 * Decide which dealers a shopper sees for one search.
 	 *
 	 * Outcomes:
-	 * - confirmed: at least one dealer can be selected without the fallback.
-	 * - fallback: none could, the merchant enabled the fallback, and nearby
-	 *   listed dealers are offered with transfer acceptance unconfirmed.
-	 * - none: no dealer can be selected. Directory listings may still be
-	 *   shown, labeled and without a select button.
+	 * - confirmed: at least one verified network dealer was found. In hybrid
+	 *   mode the dealers that need follow-up come after it in the same list.
+	 * - fallback: hybrid mode found no verified dealer, so only dealers that
+	 *   need follow-up are offered.
+	 * - none: no dealer can be selected. In confirmed-only mode directory
+	 *   listings may still be shown, labeled and without a select button.
 	 *
-	 * Fallback candidates come from the transfer-accepting results that are
-	 * not verified for checkout, then from the API's unconfirmed tier. With an
-	 * older API that has no tier, an unfiltered search runs instead, but only
-	 * when the transfer-accepting search returned nothing.
+	 * Hybrid candidates come from the transfer-accepting results and the
+	 * API's unconfirmed tier. With an older API that has no tier, an
+	 * unfiltered search runs instead, only when nothing was found.
 	 *
 	 * @param array<string, mixed> $primary Result of the transfer-accepting search.
 	 * @param callable|null        $fetch_nearby Returns an unfiltered search result or WP_Error. Used only without a tier.
-	 * @param string               $scope Result scope.
+	 * @param string               $scope Result scope, used in confirmed-only mode.
 	 * @param array<int, string>   $preferred Preferred license numbers.
-	 * @param bool                 $fallback Whether the fallback is enabled.
+	 * @param bool                 $hybrid Whether dealers that need follow-up may be selected.
 	 * @return array{outcome: string, dealers: array<int, array<string, mixed>>}
 	 */
-	public static function resolve( array $primary, ?callable $fetch_nearby, string $scope, array $preferred, bool $fallback ): array {
-		$found    = is_array( $primary['dealers'] ?? null ) ? $primary['dealers'] : array();
-		$prepared = self::prepare_results( $found, $scope, $preferred );
-		if ( self::has_confirmed( $prepared ) ) {
-			return array(
-				'outcome' => self::OUTCOME_CONFIRMED,
-				'dealers' => $prepared,
-			);
-		}
+	public static function resolve( array $primary, ?callable $fetch_nearby, string $scope, array $preferred, bool $hybrid ): array {
+		$found     = is_array( $primary['dealers'] ?? null ) ? $primary['dealers'] : array();
+		$prepared  = self::prepare_results( $found, $scope, $preferred );
+		$confirmed = self::has_confirmed( $prepared );
 
-		if ( $fallback ) {
-			$candidates = self::fallback_candidates( $found, $primary['unconfirmed'] ?? null, $fetch_nearby );
+		if ( $hybrid ) {
+			$candidates = self::hybrid_candidates( $found, $primary['unconfirmed'] ?? null, $confirmed ? null : $fetch_nearby );
 			if ( array() !== $candidates ) {
 				return array(
-					'outcome' => self::OUTCOME_FALLBACK,
-					'dealers' => self::prepare_fallback( $candidates, $preferred ),
+					'outcome' => $confirmed ? self::OUTCOME_CONFIRMED : self::OUTCOME_FALLBACK,
+					'dealers' => self::prepare_hybrid( $candidates, $preferred ),
 				);
 			}
 		}
 
 		return array(
-			'outcome' => self::OUTCOME_NONE,
+			'outcome' => $confirmed ? self::OUTCOME_CONFIRMED : self::OUTCOME_NONE,
 			'dealers' => $prepared,
 		);
 	}

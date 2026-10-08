@@ -4,6 +4,16 @@ Date: 2026-10-07
 Plugin reviewed: `ceweldy/ffl-bridge-woocommerce` at 1.1.0 (`3b3a719`)
 API reviewed: `ceweldy/ffl-bridge` at `2af2f6d` (main, 2026-10-03)
 
+## Update 2026-10-08: hybrid dealer selection
+
+Connor approved a hybrid flow that replaces the opt-in fallback described below.
+
+- **Hybrid is the default for new installs.** Shoppers can select verified network dealers, dealers that confirmed transfers but have no verified license copy, and nearby ATF-listed dealers with no transfer information. Dealers that declined transfers are never listed. Checkout is never empty just because network coverage is zero.
+- **Existing installs keep their saved behavior.** Sites with plugin settings but no saved mode become "Confirmed dealers only", or hybrid if the earlier fallback was on. Confirmed-only sites see an admin notice with "Switch to hybrid" and "Keep confirmed dealers only".
+- **Follow-up, not blocking.** After choosing a dealer that is not fully verified, the shopper is asked to contact the dealer, confirm they will accept the transfer, and have them email (or fax) a copy of their current FFL to the store. The same text appears on the thank-you page, in My Account, and in customer emails.
+- **Store confirmation.** "Mark transfer confirmed" on the order records who and when, stores an optional license file privately, adds an order note, and calls `POST /api/v1/dealers/{dealerId}/transfer-confirmations` when available.
+- **Codex findings from #6.** Order meta now keeps transfer acceptance, license verification, and selection basis separate. The coverage log expires each event after 30 days.
+
 ## The prospect's actual request
 
 The email arrived after the first draft of this review. The retailer searches near **ZIP 48047 (New Baltimore, Michigan)** with `acceptsTransfers=true` and gets **zero results, even at 100 miles**. They want only transfer-accepting dealers at checkout.

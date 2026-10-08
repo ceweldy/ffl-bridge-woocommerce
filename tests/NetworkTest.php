@@ -164,12 +164,13 @@ final class NetworkTest extends FFL_Bridge_TestCase {
 		$this->assertStringNotContainsString( 'FFL Bridge says', $summary );
 	}
 
-	public function test_fallback_is_off_by_default(): void {
-		$this->assertFalse( FFL_Bridge_Network::fallback_enabled() );
-		$this->assertSame( 'no', FFL_Bridge_Network::sanitize_fallback( '1' ) );
+	public function test_hybrid_is_the_default_mode(): void {
+		$this->assertSame( FFL_Bridge_Network::MODE_HYBRID, FFL_Bridge_Network::get_dealer_mode() );
+		$this->assertTrue( FFL_Bridge_Network::hybrid_enabled() );
+		$this->assertSame( FFL_Bridge_Network::MODE_HYBRID, FFL_Bridge_Network::sanitize_dealer_mode( 'anything' ) );
 
-		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_fallback'] = 'yes';
-		$this->assertTrue( FFL_Bridge_Network::fallback_enabled() );
+		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_dealer_mode'] = 'confirmed_only';
+		$this->assertFalse( FFL_Bridge_Network::hybrid_enabled() );
 	}
 
 	public function test_resolve_returns_confirmed_without_calling_the_nearby_search(): void {
@@ -223,7 +224,7 @@ final class NetworkTest extends FFL_Bridge_TestCase {
 
 		$this->assertSame( FFL_Bridge_Network::OUTCOME_FALLBACK, $resolved['outcome'] );
 		$this->assertSame( array( 'far-preferred', 'near' ), array_column( $resolved['dealers'], 'name' ) );
-		$this->assertSame( array( 'unconfirmed', 'unconfirmed' ), array_column( $resolved['dealers'], 'network' ) );
+		$this->assertSame( array( 'unknown', 'unconfirmed' ), array_column( $resolved['dealers'], 'network' ) );
 		$this->assertSame( array( true, true ), array_column( $resolved['dealers'], 'selectable' ) );
 	}
 
@@ -261,7 +262,7 @@ final class NetworkTest extends FFL_Bridge_TestCase {
 	}
 
 	public function test_fallback_keeps_verified_dealers_classified_as_verified(): void {
-		$prepared = FFL_Bridge_Network::prepare_fallback( array( $this->dealer( 'v', '1-11-111-11-1A-00001', true ) ), array() );
+		$prepared = FFL_Bridge_Network::prepare_hybrid( array( $this->dealer( 'v', '1-11-111-11-1A-00001', true ) ), array() );
 
 		$this->assertSame( 'verified', $prepared[0]['network'] );
 	}
