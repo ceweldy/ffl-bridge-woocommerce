@@ -85,16 +85,20 @@ final class FFL_Bridge_API_Client {
 	/**
 	 * Search for dealers and return optional coverage metadata as well.
 	 *
-	 * By default only dealers listed as accepting transfers are requested. The
-	 * unfiltered search is used only for the merchant-enabled fallback.
+	 * By default only dealers listed as accepting transfers are requested. With
+	 * $include_unconfirmed, the API also returns its separate unconfirmed tier
+	 * (nearby dealers with no transfer acceptance on record), which feeds the
+	 * merchant-enabled fallback without a second request. APIs that predate
+	 * the tier ignore the parameter, and 'unconfirmed' is then null.
 	 *
 	 * @param string $zip ZIP code.
 	 * @param int    $radius Search radius in miles.
 	 * @param int    $limit Maximum result count.
 	 * @param bool   $transfers_only Request only transfer-accepting dealers.
-	 * @return array{dealers: array<int, array<string, mixed>>, coverage: array<string, int>|null, reason: string}|WP_Error
+	 * @param bool   $include_unconfirmed Also request the unconfirmed tier.
+	 * @return array{dealers: array<int, array<string, mixed>>, unconfirmed: array<int, array<string, mixed>>|null, coverage: array<string, int>|null, reason: string, reason_message: string}|WP_Error
 	 */
-	public static function search_with_meta( string $zip, int $radius, int $limit = 20, bool $transfers_only = true ): array|WP_Error {
+	public static function search_with_meta( string $zip, int $radius, int $limit = 20, bool $transfers_only = true, bool $include_unconfirmed = false ): array|WP_Error {
 		if ( 1 !== preg_match( '/\A\d{5}\z/', $zip ) ) {
 			return new WP_Error( 'ffl_bridge_invalid_zip', __( 'Enter a valid five-digit ZIP code.', 'ffl-bridge-for-woocommerce' ) );
 		}
@@ -103,9 +107,10 @@ final class FFL_Bridge_API_Client {
 			return new WP_Error( 'ffl_bridge_invalid_radius', __( 'Choose a supported search radius.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		$limit     = max( 1, min( 25, $limit ) );
-		$cache_key = self::search_cache_key( $zip, $radius, $limit, $transfers_only );
-		$cached    = get_transient( $cache_key );
+		$limit               = max( 1, min( 25, $limit ) );
+		$include_unconfirmed = $include_unconfirmed && $transfers_only;
+		$cache_key           = self::search_cache_key( $zip, $radius, $limit, $transfers_only, $include_unconfirmed );
+		$cached              = get_transient( $cache_key );
 		if ( is_array( $cached ) && isset( $cached['dealers'] ) && is_array( $cached['dealers'] ) ) {
 			return $cached;
 		}
@@ -118,6 +123,9 @@ final class FFL_Bridge_API_Client {
 		if ( $transfers_only ) {
 			$query['acceptsTransfers'] = 'true';
 		}
+		if ( $include_unconfirmed ) {
+			$query['includeUnconfirmed'] = 'true';
+		}
 
 		$response = self::request( '/search', $query );
 		if ( is_wp_error( $response ) ) {
@@ -129,42 +137,91 @@ final class FFL_Bridge_API_Client {
 			return new WP_Error( 'ffl_bridge_invalid_response', __( 'FFL Bridge returned an invalid search response.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		$results = array();
-		foreach ( array_slice( $raw_results, 0, $limit ) as $raw_dealer ) {
+		$result = array_merge(
+			array(
+				'dealers'     => self::normalize_dealer_list( $raw_results, $limit ),
+				'unconfirmed' => self::parse_unconfirmed_tier( $response['data'], $limit ),
+			),
+			self::parse_search_meta( $response['data'] )
+		);
+		set_transient( $cache_key, $result, self::CACHE_TTL );
+		return $result;
+	}
+
+	/**
+	 * Normalize a list of raw API dealers, dropping invalid entries.
+	 *
+	 * @param array<int|string, mixed> $raw_dealers Raw API dealers.
+	 * @param int                      $limit Maximum count.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private static function normalize_dealer_list( array $raw_dealers, int $limit ): array {
+		$dealers = array();
+		foreach ( array_slice( array_values( $raw_dealers ), 0, $limit ) as $raw_dealer ) {
 			if ( ! is_array( $raw_dealer ) ) {
 				continue;
 			}
 
 			$dealer = self::normalize_dealer( $raw_dealer );
 			if ( ! is_wp_error( $dealer ) ) {
-				$results[] = $dealer;
+				$dealers[] = $dealer;
 			}
 		}
 
-		$result = array_merge( array( 'dealers' => $results ), self::parse_search_meta( $response['data'] ) );
-		set_transient( $cache_key, $result, self::CACHE_TTL );
-		return $result;
+		return $dealers;
 	}
 
 	/**
-	 * Read optional coverage metadata from a search response.
+	 * Read the API's unconfirmed tier, if the response has one.
 	 *
-	 * The fields are not part of the current API. They are read when present
-	 * and ignored when absent or malformed:
-	 * - data.coverage.{dealersInRadius, acceptingTransfers, checkoutEligible}
-	 * - data.zeroResultReason, a short upper-case code.
+	 * The tier lists current ATF-listed dealers with no transfer acceptance on
+	 * record. They are never checkout eligible. Dealers that declined
+	 * transfers are dropped here as well, in case the API ever includes one.
 	 *
 	 * @param mixed $data Response data object.
-	 * @return array{coverage: array<string, int>|null, reason: string}
+	 * @param int   $limit Maximum count.
+	 * @return array<int, array<string, mixed>>|null Null when the response has no tier.
+	 */
+	public static function parse_unconfirmed_tier( mixed $data, int $limit = 25 ): ?array {
+		$tier = is_array( $data ) ? ( $data['unconfirmedTier'] ?? null ) : null;
+		if ( ! is_array( $tier ) || ! is_array( $tier['results'] ?? null ) ) {
+			return null;
+		}
+
+		$dealers = array();
+		foreach ( self::normalize_dealer_list( $tier['results'], $limit ) as $dealer ) {
+			if ( 'declined' !== $dealer['transfer_status'] ) {
+				$dealer['checkout_eligible'] = false;
+				$dealers[]                   = $dealer;
+			}
+		}
+
+		return $dealers;
+	}
+
+	/**
+	 * Read coverage metadata from a search response.
+	 *
+	 * Matches data.coverage from FFL Bridge search: radiusMiles,
+	 * directoryDealers, transferConfirmedDealers, verifiedCheckoutDealers,
+	 * transferDeclinedDealers, transferUnconfirmedDealers, and
+	 * emptyReason { code, message } (null when results are not empty).
+	 * Older APIs send no coverage, and malformed values are ignored.
+	 *
+	 * @param mixed $data Response data object.
+	 * @return array{coverage: array<string, int>|null, reason: string, reason_message: string}
 	 */
 	public static function parse_search_meta( mixed $data ): array {
 		$coverage = null;
 		$raw      = is_array( $data ) ? ( $data['coverage'] ?? null ) : null;
 		if ( is_array( $raw ) ) {
 			$map = array(
-				'dealers_in_radius'   => 'dealersInRadius',
-				'accepting_transfers' => 'acceptingTransfers',
-				'checkout_eligible'   => 'checkoutEligible',
+				'radius'               => 'radiusMiles',
+				'dealers_in_radius'    => 'directoryDealers',
+				'accepting_transfers'  => 'transferConfirmedDealers',
+				'checkout_eligible'    => 'verifiedCheckoutDealers',
+				'transfer_declined'    => 'transferDeclinedDealers',
+				'transfer_unconfirmed' => 'transferUnconfirmedDealers',
 			);
 			foreach ( $map as $key => $api_key ) {
 				$value = $raw[ $api_key ] ?? null;
@@ -174,15 +231,18 @@ final class FFL_Bridge_API_Client {
 			}
 		}
 
-		$reason = is_array( $data ) ? ( $data['zeroResultReason'] ?? '' ) : '';
-		$reason = is_string( $reason ) ? strtoupper( $reason ) : '';
+		$empty   = is_array( $raw ) && is_array( $raw['emptyReason'] ?? null ) ? $raw['emptyReason'] : array();
+		$reason  = is_string( $empty['code'] ?? null ) ? strtoupper( $empty['code'] ) : '';
+		$message = is_string( $empty['message'] ?? null ) ? self::bounded_text( $empty['message'], 300 ) : '';
 		if ( 1 !== preg_match( '/\A[A-Z][A-Z_]{0,63}\z/', $reason ) ) {
-			$reason = '';
+			$reason  = '';
+			$message = '';
 		}
 
 		return array(
-			'coverage' => $coverage,
-			'reason'   => $reason,
+			'coverage'       => $coverage,
+			'reason'         => $reason,
+			'reason_message' => $message,
 		);
 	}
 
@@ -244,6 +304,13 @@ final class FFL_Bridge_API_Client {
 		$dealer['license_verified']   = true === ( $eligibility['licenseVerified'] ?? false );
 		$dealer['checkout_eligible']  = $confirmed;
 		$dealer['transfer_confirmed'] = $confirmed;
+
+		// The detail endpoint has no transferStatus. A dealer with transfers on
+		// record has confirmed them with FFL Bridge.
+		if ( null === ( $dealer['transfer_status'] ?? null ) && ! empty( $dealer['accepts_transfers'] ) ) {
+			$dealer['transfer_status'] = 'confirmed';
+		}
+
 		return $dealer;
 	}
 
@@ -297,6 +364,7 @@ final class FFL_Bridge_API_Client {
 			'accepts_transfers' => true === ( $raw['acceptsTransfers'] ?? false ),
 			'is_active'         => ! array_key_exists( 'isActive', $raw ) || true === $raw['isActive'],
 			'checkout_eligible' => array_key_exists( 'checkoutEligible', $raw ) ? true === $raw['checkoutEligible'] : null,
+			'transfer_status'   => in_array( $raw['transferStatus'] ?? null, array( 'confirmed', 'declined', 'unconfirmed' ), true ) ? $raw['transferStatus'] : null,
 		);
 	}
 
@@ -435,11 +503,13 @@ final class FFL_Bridge_API_Client {
 	 * @param int    $radius Radius.
 	 * @param int    $limit Result limit.
 	 * @param bool   $transfers_only Whether only transfer-accepting dealers were requested.
+	 * @param bool   $include_unconfirmed Whether the unconfirmed tier was requested.
 	 * @return string
 	 */
-	private static function search_cache_key( string $zip, int $radius, int $limit, bool $transfers_only ): string {
+	private static function search_cache_key( string $zip, int $radius, int $limit, bool $transfers_only, bool $include_unconfirmed ): string {
 		$key_scope = hash_hmac( 'sha256', self::get_api_key(), wp_salt( 'auth' ) );
-		return 'ffl_bridge_search_v2_' . hash( 'sha256', $key_scope . '|' . $zip . '|' . $radius . '|' . $limit . '|' . ( $transfers_only ? 't' : 'a' ) );
+		$mode      = ( $transfers_only ? 't' : 'a' ) . ( $include_unconfirmed ? 'u' : '' );
+		return 'ffl_bridge_search_v3_' . hash( 'sha256', $key_scope . '|' . $zip . '|' . $radius . '|' . $limit . '|' . $mode );
 	}
 
 	/**

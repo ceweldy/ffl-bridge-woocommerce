@@ -128,16 +128,40 @@ final class NetworkTest extends FFL_Bridge_TestCase {
 
 	public function test_connection_summary_reports_zero_coverage_and_fallback_potential(): void {
 		$transfer = array(
-			'dealers'  => array(),
-			'coverage' => array( 'dealers_in_radius' => 41 ),
-			'reason'   => 'NO_TRANSFER_DEALERS_IN_RADIUS',
+			'dealers'        => array(),
+			'coverage'       => array(
+				'radius'               => 100,
+				'dealers_in_radius'    => 412,
+				'accepting_transfers'  => 0,
+				'checkout_eligible'    => 0,
+				'transfer_declined'    => 2,
+				'transfer_unconfirmed' => 410,
+			),
+			'reason'         => 'NO_TRANSFER_CONFIRMED_DEALERS_IN_RADIUS',
+			'reason_message' => '412 ATF-listed dealers are in this radius, but none has confirmed transfer acceptance with FFL Bridge yet.',
 		);
 
 		$summary = FFL_Bridge_Settings::connection_summary( '48047', 100, $transfer, 25 );
 
 		$this->assertStringContainsString( 'Within 100 miles of 48047: 0 dealers listed as accepting transfers, 0 in the verified checkout network.', $summary );
+		$this->assertStringContainsString( 'FFL Bridge coverage for this area: 412 ATF-listed dealers, 0 confirmed transfers, 0 verified for checkout, 2 declined transfers.', $summary );
+		$this->assertStringContainsString( 'FFL Bridge says: 412 ATF-listed dealers are in this radius', $summary );
+		$this->assertStringContainsString( '25 nearby dealers could be offered as unconfirmed', $summary );
+	}
+
+	public function test_connection_summary_with_partial_coverage_uses_short_line(): void {
+		$summary = FFL_Bridge_Settings::connection_summary(
+			'48047',
+			100,
+			array(
+				'dealers'  => array(),
+				'coverage' => array( 'dealers_in_radius' => 41 ),
+			),
+			null
+		);
+
 		$this->assertStringContainsString( 'FFL Bridge reports 41 licensed dealers in this area.', $summary );
-		$this->assertStringContainsString( '25 nearby listed dealers could be offered as unconfirmed', $summary );
+		$this->assertStringNotContainsString( 'FFL Bridge says', $summary );
 	}
 
 	public function test_fallback_is_off_by_default(): void {

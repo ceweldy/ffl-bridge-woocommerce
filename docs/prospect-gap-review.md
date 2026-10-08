@@ -47,26 +47,36 @@ This comes from reading `ceweldy/ffl-bridge` at `2af2f6d`. It was not checked ag
 **Optional fallback (off by default)**
 
 - Setting: **When no confirmed dealer is found**: "Show a message only (default)" or "Also offer nearby dealers labeled 'Transfer not confirmed'".
-- It applies only when the transfer-accepting search has no selectable dealer. If that search returned unverified transfer-accepting listings, those are offered. If it returned nothing, one unfiltered search (no `acceptsTransfers`) runs to find nearby ATF-listed active dealers. That extra API call happens only in the zero case.
-- Fallback dealers are labeled "Transfer not confirmed" and tell the shopper to contact the dealer. They can be selected.
+- It applies only when the transfer-accepting search has no selectable dealer. Candidates are, in order:
+  - transfer-accepting dealers whose license copy is not verified;
+  - the API's `unconfirmedTier` (requested with `includeUnconfirmed=true` only while the fallback is on, so it needs no extra request).
+- With an older API that has no tier, one unfiltered search (no `acceptsTransfers`) runs instead, and only when the transfer-accepting search returned nothing.
+- Dealers whose `transferStatus` is `declined` are never offered.
+- Fallback dealers are labeled "Transfer not confirmed" and tell the shopper to contact the dealer. A dealer that confirmed transfers but has no verified license copy is labeled "License not verified" instead.
+- They can be selected, and with the fallback on, a fallback selection satisfies "Require a selection". Connor confirmed this behavior on 2026-10-08.
+- The API describes its tier as "not checkout eligible and cannot be used to create an order". That rule is about `POST /api/v1/orders`, which the plugin does not call. The plugin records the selection on the WooCommerce order only, marked unconfirmed.
 - The server still checks that the dealer exists, is active and ATF-listed, and matches the license number. A flag in the signed selection handle marks it as a fallback, so a shopper cannot turn an unconfirmed dealer into a confirmed one or the reverse.
 - The order records `_ffl_bridge_transfer_confirmed = no`, adds an order note saying FFL Bridge has not confirmed the transfer, and shows "Transfer not confirmed" in admin, the order list, emails, the thank-you page, and My Account.
 - If the merchant turns the fallback off while a shopper has a fallback dealer selected, checkout asks the shopper to choose a confirmed dealer.
 - Orders saved before this change have no flag and are treated as confirmed.
 
-**Optional API fields (read when present)**
+**API coverage fields (ceweldy/ffl-bridge PR #71)**
 
-No API PR adds these yet. The plugin reads them under the names below, and ignores missing or malformed values:
+The plugin reads the response shape from PR #71 (branch `claude/clever-sagan-p48bba`). It ignores missing or malformed values, so APIs without these fields keep working with plain wording.
 
-- `data.coverage.dealersInRadius`, `data.coverage.acceptingTransfers`, and `data.coverage.checkoutEligible`. Non-negative integers.
-- `data.zeroResultReason`. An upper-case code. The plugin has wording for `NO_DEALERS_IN_RADIUS`, `NO_TRANSFER_DEALERS_IN_RADIUS`, and `NO_VERIFIED_DEALERS_IN_RADIUS`. Other codes are recorded in the coverage table but not shown to shoppers.
-
-If the API PR picks different names, the plugin's `parse_search_meta()` needs a matching change.
+- **`data.coverage`**: returned whenever `acceptsTransfers` is sent, which the plugin always does. It contains:
+  - integer counts: `radiusMiles`, `directoryDealers`, `transferConfirmedDealers`, `verifiedCheckoutDealers`, `transferDeclinedDealers`, and `transferUnconfirmedDealers`;
+  - `emptyReason`, either `{ code, message }` or `null` when results are not empty.
+- **Reason codes**: the plugin has shopper wording for `NO_DEALERS_IN_RADIUS`, `NO_TRANSFER_CONFIRMED_DEALERS_IN_RADIUS`, and `NO_VERIFIED_CHECKOUT_DEALERS_IN_RADIUS`. Other codes are recorded in the coverage table but not shown to shoppers.
+- **Reason message**: the API's `emptyReason.message` is written for integrators and is not translated, so it is shown only in the admin connection test.
+- **`data.unconfirmedTier`** (`label`, `notice`, `total`, `results`): returned only with `includeUnconfirmed=true` and a transfer filter. It feeds the fallback.
+- **Per-dealer `transferStatus`** (`confirmed`, `declined`, `unconfirmed`): used to exclude declined dealers and choose fallback labels. The per-dealer `network` field duplicates `checkoutEligible`, which the plugin already reads.
+- **Older APIs**: they ignore `includeUnconfirmed`, because the search query schema is not strict, so sending it is safe.
 
 ## API work needed in `ceweldy/ffl-bridge` for this request
 
 1. **Transfer acceptance data.** This is the real fix. Options include dealer outreach and self-service claims, importing acceptance data from partners, or a lighter "accepts transfers (unverified)" state separate from the verified checkout network.
-2. **Coverage metadata on search**, using the field names above or a documented equivalent. A cheap count of all listed dealers in the radius avoids a second search for the fallback decision and the admin message.
+2. **Coverage metadata on search.** Done in PR #71 and consumed by this plugin. PR #71 must merge before this PR.
 3. **A merchant coverage endpoint** (counts by ZIP or state) so the settings page can show coverage without spending searches.
 4. **Fallback support in the order API.** `POST /orders` rejects unconfirmed dealers, which is fine while the plugin does not call it (see ask 3 below). If orders are registered later, unconfirmed selections need an explicit state.
 

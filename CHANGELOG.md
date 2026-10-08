@@ -12,7 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A coverage log and dismissible admin notice listing three-digit ZIP areas where shoppers found no confirmed transfer dealer, plus a coverage table on the settings page.
 - An optional "When no confirmed dealer is found" fallback, off by default, that offers nearby listed dealers labeled "Transfer not confirmed". Orders record `_ffl_bridge_transfer_confirmed` and show the warning to staff and customers.
 - A ZIP and radius coverage check in the settings connection test.
-- Support for optional API coverage counts and a zero-result reason when the API sends them.
+- Support for FFL Bridge search coverage counts, `emptyReason`, the `unconfirmedTier` fallback list, and per-dealer `transferStatus` when the API sends them. Older API responses keep working.
 - A clear message when the API cannot locate a ZIP code.
 
 - Checkout labels that separate the verified checkout network from public directory listings. Directory-only dealers are shown for reference without a select button and never receive a selection handle.

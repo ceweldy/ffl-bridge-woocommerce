@@ -271,19 +271,22 @@ final class FFL_Bridge_Settings {
 		$zip    = '' === $zip ? self::SAMPLE_ZIP : $zip;
 		$radius = in_array( $radius, FFL_Bridge_API_Client::ALLOWED_RADII, true ) ? $radius : self::SAMPLE_RADIUS;
 
-		$transfer = FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 25 );
+		$transfer = FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 25, true, true );
 		if ( is_wp_error( $transfer ) ) {
 			wp_send_json_error( array( 'message' => $transfer->get_error_message() ), 400 );
 		}
 
-		// Only count the unfiltered directory when no confirmed dealer exists,
-		// which is when the fallback setting would matter.
-		$nearby   = null;
-		$prepared = FFL_Bridge_Network::prepare_results( $transfer['dealers'], FFL_Bridge_Network::SCOPE_ALL, array() );
-		if ( ! FFL_Bridge_Network::has_confirmed( $prepared ) ) {
-			$all    = FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 25, false );
-			$nearby = is_wp_error( $all ) ? null : count( $all['dealers'] );
-		}
+		// Count what the fallback would offer, using the same rules as checkout.
+		// An older API without the unconfirmed tier needs one unfiltered search,
+		// and only when no confirmed dealer exists.
+		$resolved = FFL_Bridge_Network::resolve(
+			$transfer,
+			static fn () => FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 25, false ),
+			FFL_Bridge_Network::SCOPE_ALL,
+			array(),
+			true
+		);
+		$nearby   = FFL_Bridge_Network::OUTCOME_CONFIRMED === $resolved['outcome'] ? null : count( $resolved['dealers'] );
 
 		wp_send_json_success( array( 'message' => self::connection_summary( $zip, $radius, $transfer, $nearby ) ) );
 	}
@@ -323,7 +326,16 @@ final class FFL_Bridge_Settings {
 		}
 
 		$coverage = $transfer['coverage'] ?? null;
-		if ( is_array( $coverage ) && isset( $coverage['dealers_in_radius'] ) ) {
+		if ( is_array( $coverage ) && isset( $coverage['dealers_in_radius'], $coverage['accepting_transfers'], $coverage['checkout_eligible'], $coverage['transfer_declined'] ) ) {
+			$parts[] = sprintf(
+				/* translators: 1: ATF-listed dealers in the area, 2: dealers that confirmed transfers, 3: dealers verified for checkout, 4: dealers that declined transfers. */
+				__( 'FFL Bridge coverage for this area: %1$d ATF-listed dealers, %2$d confirmed transfers, %3$d verified for checkout, %4$d declined transfers.', 'ffl-bridge-for-woocommerce' ),
+				$coverage['dealers_in_radius'],
+				$coverage['accepting_transfers'],
+				$coverage['checkout_eligible'],
+				$coverage['transfer_declined']
+			);
+		} elseif ( is_array( $coverage ) && isset( $coverage['dealers_in_radius'] ) ) {
 			$parts[] = sprintf(
 				/* translators: %d: number of licensed dealers in the area. */
 				__( 'FFL Bridge reports %d licensed dealers in this area.', 'ffl-bridge-for-woocommerce' ),
@@ -331,10 +343,16 @@ final class FFL_Bridge_Settings {
 			);
 		}
 
+		$reason_message = $transfer['reason_message'] ?? '';
+		if ( is_string( $reason_message ) && '' !== $reason_message ) {
+			/* translators: %s: explanation from the FFL Bridge API. */
+			$parts[] = sprintf( __( 'FFL Bridge says: %s', 'ffl-bridge-for-woocommerce' ), $reason_message );
+		}
+
 		if ( null !== $nearby ) {
 			$parts[] = sprintf(
 				/* translators: %d: number of nearby listed dealers. */
-				__( 'Shoppers here cannot select a confirmed dealer. %d nearby listed dealers could be offered as unconfirmed if you turn on the fallback.', 'ffl-bridge-for-woocommerce' ),
+				__( 'Shoppers here cannot select a confirmed dealer. %d nearby dealers could be offered as unconfirmed if you turn on the fallback.', 'ffl-bridge-for-woocommerce' ),
 				$nearby
 			);
 		}

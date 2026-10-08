@@ -12,7 +12,7 @@ final class CoverageTest extends FFL_Bridge_TestCase {
 
 	public function test_gap_is_recorded_by_three_digit_zip_area_only(): void {
 		FFL_Bridge_Coverage::record_gap( '48047', 50, false, '', self::NOW );
-		FFL_Bridge_Coverage::record_gap( '48093', 100, true, 'NO_TRANSFER_DEALERS_IN_RADIUS', self::NOW + 10 );
+		FFL_Bridge_Coverage::record_gap( '48093', 100, true, 'NO_TRANSFER_CONFIRMED_DEALERS_IN_RADIUS', self::NOW + 10 );
 
 		$log = FFL_Bridge_Coverage::get_log( self::NOW + 20 );
 
@@ -20,7 +20,7 @@ final class CoverageTest extends FFL_Bridge_TestCase {
 		$this->assertSame( 2, $log['areas']['480']['count'] );
 		$this->assertSame( 1, $log['areas']['480']['fallback'] );
 		$this->assertSame( 100, $log['areas']['480']['max_radius'] );
-		$this->assertSame( 'NO_TRANSFER_DEALERS_IN_RADIUS', $log['areas']['480']['reason'] );
+		$this->assertSame( 'NO_TRANSFER_CONFIRMED_DEALERS_IN_RADIUS', $log['areas']['480']['reason'] );
 		$this->assertSame( 2, FFL_Bridge_Coverage::total( $log ) );
 		$this->assertStringNotContainsString( '48047', (string) wp_json_encode( $GLOBALS['ffl_bridge_test_options'][ FFL_Bridge_Coverage::OPTION ] ) );
 	}

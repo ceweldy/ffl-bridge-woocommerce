@@ -68,7 +68,9 @@
 			badges.appendChild( element( 'span', 'ffl-bridge-badge is-preferred', message( config, 'preferred', 'Store preferred dealer' ) ) );
 		}
 		if ( dealer.network === 'unconfirmed' || dealer.transferConfirmed === false ) {
-			badges.appendChild( element( 'span', 'ffl-bridge-badge is-unconfirmed', message( config, 'unconfirmed', 'Transfer not confirmed' ) ) );
+			badges.appendChild( dealer.transferStatus === 'confirmed'
+				? element( 'span', 'ffl-bridge-badge is-unconfirmed', message( config, 'licenseBadge', 'License not verified' ) )
+				: element( 'span', 'ffl-bridge-badge is-unconfirmed', message( config, 'unconfirmed', 'Transfer not confirmed' ) ) );
 		} else if ( dealer.network === 'verified' ) {
 			badges.appendChild( element( 'span', 'ffl-bridge-badge is-verified', message( config, 'verifiedBadge', 'Verified checkout network' ) ) );
 		} else if ( dealer.network === 'directory' ) {
@@ -77,6 +79,12 @@
 		if ( badges.childNodes.length ) {
 			container.appendChild( badges );
 		}
+	}
+
+	function unconfirmedNote( dealer, config ) {
+		return dealer.transferStatus === 'confirmed'
+			? message( config, 'licenseNote', 'This dealer has confirmed transfers, but its license copy is not verified yet. Contact the dealer before you order.' )
+			: message( config, 'contactDealer', 'Contact this dealer to confirm they will accept the transfer before you order.' );
 	}
 
 	function mount( root, suppliedConfig ) {
@@ -108,7 +116,7 @@
 				appendDealerDetails( selectedBox, selected, false, config );
 				if ( selected.transferConfirmed === false ) {
 					selectedBox.classList.add( 'is-unconfirmed' );
-					selectedBox.appendChild( element( 'p', 'ffl-bridge-unconfirmed-note', message( config, 'contactDealer', 'Contact this dealer to confirm they will accept the transfer before you order.' ) ) );
+					selectedBox.appendChild( element( 'p', 'ffl-bridge-unconfirmed-note', unconfirmedNote( selected, config ) ) );
 				}
 				selectedBox.appendChild( element( 'p', 'ffl-bridge-confirm-notice', message( config, 'confirmNotice', 'Contact the dealer before the order ships.' ) ) );
 
@@ -210,7 +218,7 @@
 
 					if ( dealer.network === 'unconfirmed' ) {
 						card.classList.add( 'is-unconfirmed' );
-						card.appendChild( element( 'p', 'ffl-bridge-unconfirmed-note', message( config, 'contactDealer', 'Contact this dealer to confirm they will accept the transfer before you order.' ) ) );
+						card.appendChild( element( 'p', 'ffl-bridge-unconfirmed-note', unconfirmedNote( dealer, config ) ) );
 					}
 
 					var selectButton = element( 'button', 'button ffl-bridge-select', message( config, 'select', 'Select dealer' ) );

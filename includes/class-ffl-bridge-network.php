@@ -221,6 +221,34 @@ final class FFL_Bridge_Network {
 	}
 
 	/**
+	 * Collect fallback candidates without duplicates or declined dealers.
+	 *
+	 * @param array<int, array<string, mixed>> $found Transfer-accepting results.
+	 * @param mixed                            $tier The API unconfirmed tier, or null when absent.
+	 * @param callable|null                    $fetch_nearby Unfiltered search for older APIs.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private static function fallback_candidates( array $found, mixed $tier, ?callable $fetch_nearby ): array {
+		$candidates = $found;
+		if ( is_array( $tier ) ) {
+			$candidates = array_merge( $candidates, $tier );
+		} elseif ( array() === $found && null !== $fetch_nearby ) {
+			$nearby     = $fetch_nearby();
+			$candidates = is_array( $nearby ) && is_array( $nearby['dealers'] ?? null ) ? $nearby['dealers'] : array();
+		}
+
+		$unique = array();
+		foreach ( $candidates as $dealer ) {
+			$id = is_string( $dealer['id'] ?? null ) ? $dealer['id'] : '';
+			if ( 'declined' !== ( $dealer['transfer_status'] ?? null ) && ( '' === $id || ! isset( $unique[ $id ] ) ) ) {
+				$unique[ '' === $id ? count( $unique ) . '#' : $id ] = $dealer;
+			}
+		}
+
+		return array_values( $unique );
+	}
+
+	/**
 	 * Mark nearby dealers as selectable fallback dealers whose transfer
 	 * acceptance is not confirmed.
 	 *
@@ -260,12 +288,13 @@ final class FFL_Bridge_Network {
 	 * - none: no dealer can be selected. Directory listings may still be
 	 *   shown, labeled and without a select button.
 	 *
-	 * The unfiltered search runs only when the fallback is enabled and the
-	 * transfer-accepting search returned nothing, so it costs no extra API
-	 * call in the common case.
+	 * Fallback candidates come from the transfer-accepting results that are
+	 * not verified for checkout, then from the API's unconfirmed tier. With an
+	 * older API that has no tier, an unfiltered search runs instead, but only
+	 * when the transfer-accepting search returned nothing.
 	 *
 	 * @param array<string, mixed> $primary Result of the transfer-accepting search.
-	 * @param callable|null        $fetch_nearby Returns an unfiltered search result or WP_Error.
+	 * @param callable|null        $fetch_nearby Returns an unfiltered search result or WP_Error. Used only without a tier.
 	 * @param string               $scope Result scope.
 	 * @param array<int, string>   $preferred Preferred license numbers.
 	 * @param bool                 $fallback Whether the fallback is enabled.
@@ -282,12 +311,7 @@ final class FFL_Bridge_Network {
 		}
 
 		if ( $fallback ) {
-			$candidates = $found;
-			if ( array() === $candidates && null !== $fetch_nearby ) {
-				$nearby     = $fetch_nearby();
-				$candidates = is_array( $nearby ) && is_array( $nearby['dealers'] ?? null ) ? $nearby['dealers'] : array();
-			}
-
+			$candidates = self::fallback_candidates( $found, $primary['unconfirmed'] ?? null, $fetch_nearby );
 			if ( array() !== $candidates ) {
 				return array(
 					'outcome' => self::OUTCOME_FALLBACK,

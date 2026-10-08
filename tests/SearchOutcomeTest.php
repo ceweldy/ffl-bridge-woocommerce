@@ -8,46 +8,181 @@
 declare(strict_types=1);
 
 final class SearchOutcomeTest extends FFL_Bridge_TestCase {
-	public function test_search_meta_is_read_when_present(): void {
-		$meta = FFL_Bridge_API_Client::parse_search_meta(
+	public function test_search_meta_matches_the_api_coverage_shape(): void {
+		$meta = FFL_Bridge_API_Client::parse_search_meta( $this->michiganResponse() );
+
+		$this->assertSame(
 			array(
-				'results'          => array(),
-				'coverage'         => array(
-					'dealersInRadius'    => 41,
-					'acceptingTransfers' => 0,
-					'checkoutEligible'   => 0,
-				),
-				'zeroResultReason' => 'no_transfer_dealers_in_radius',
-			)
+				'radius'               => 100,
+				'dealers_in_radius'    => 412,
+				'accepting_transfers'  => 0,
+				'checkout_eligible'    => 0,
+				'transfer_declined'    => 0,
+				'transfer_unconfirmed' => 412,
+			),
+			$meta['coverage']
+		);
+		$this->assertSame( 'NO_TRANSFER_CONFIRMED_DEALERS_IN_RADIUS', $meta['reason'] );
+		$this->assertStringStartsWith( '412 ATF-listed dealers are in this radius', $meta['reason_message'] );
+	}
+
+	public function test_null_empty_reason_means_no_reason(): void {
+		$data                            = $this->michiganResponse();
+		$data['coverage']['emptyReason'] = null;
+
+		$meta = FFL_Bridge_API_Client::parse_search_meta( $data );
+
+		$this->assertSame( 412, $meta['coverage']['dealers_in_radius'] );
+		$this->assertSame( '', $meta['reason'] );
+		$this->assertSame( '', $meta['reason_message'] );
+	}
+
+	public function test_older_api_response_without_coverage_degrades(): void {
+		$older = array(
+			'results' => array(),
+			'total'   => 0,
+			'query'   => array( 'radius' => 100 ),
 		);
 
 		$this->assertSame(
 			array(
-				'dealers_in_radius'   => 41,
-				'accepting_transfers' => 0,
-				'checkout_eligible'   => 0,
+				'coverage'       => null,
+				'reason'         => '',
+				'reason_message' => '',
 			),
-			$meta['coverage']
+			FFL_Bridge_API_Client::parse_search_meta( $older )
 		);
-		$this->assertSame( 'NO_TRANSFER_DEALERS_IN_RADIUS', $meta['reason'] );
+		$this->assertSame( array( 'coverage' => null, 'reason' => '', 'reason_message' => '' ), FFL_Bridge_API_Client::parse_search_meta( null ) );
+		$this->assertNull( FFL_Bridge_API_Client::parse_unconfirmed_tier( $older ) );
 	}
 
-	public function test_search_meta_degrades_when_absent_or_malformed(): void {
-		$this->assertSame( array( 'coverage' => null, 'reason' => '' ), FFL_Bridge_API_Client::parse_search_meta( array( 'results' => array() ) ) );
-		$this->assertSame( array( 'coverage' => null, 'reason' => '' ), FFL_Bridge_API_Client::parse_search_meta( null ) );
-
+	public function test_malformed_coverage_values_are_ignored(): void {
 		$meta = FFL_Bridge_API_Client::parse_search_meta(
 			array(
-				'coverage'         => array(
-					'dealersInRadius'    => '41',
-					'acceptingTransfers' => -1,
-					'checkoutEligible'   => 3,
+				'coverage' => array(
+					'directoryDealers'         => '412',
+					'transferConfirmedDealers' => -1,
+					'verifiedCheckoutDealers'  => 3,
+					'emptyReason'              => array(
+						'code'    => '<script>',
+						'message' => 'ignored with a bad code',
+					),
 				),
-				'zeroResultReason' => '<script>',
 			)
 		);
+
 		$this->assertSame( array( 'checkout_eligible' => 3 ), $meta['coverage'] );
 		$this->assertSame( '', $meta['reason'] );
+		$this->assertSame( '', $meta['reason_message'] );
+
+		$string_reason = FFL_Bridge_API_Client::parse_search_meta( array( 'coverage' => array( 'emptyReason' => 'NO_DEALERS_IN_RADIUS' ) ) );
+		$this->assertSame( '', $string_reason['reason'] );
+	}
+
+	public function test_unconfirmed_tier_is_normalized_and_drops_declined_dealers(): void {
+		$data = $this->michiganResponse();
+		$tier = FFL_Bridge_API_Client::parse_unconfirmed_tier( $data );
+
+		$this->assertIsArray( $tier );
+		$this->assertCount( 1, $tier );
+		$this->assertSame( 'unconfirmed', $tier[0]['transfer_status'] );
+		$this->assertFalse( $tier[0]['checkout_eligible'] );
+		$this->assertSame( 'Macomb Sporting Goods', $tier[0]['name'] );
+
+		$data['unconfirmedTier']['results'] = 'not a list';
+		$this->assertNull( FFL_Bridge_API_Client::parse_unconfirmed_tier( $data ) );
+	}
+
+	public function test_transfer_status_is_allowlisted(): void {
+		$this->assertSame( 'confirmed', FFL_Bridge_API_Client::normalize_dealer( $this->rawDealer( array( 'transferStatus' => 'confirmed' ) ) )['transfer_status'] );
+		$this->assertNull( FFL_Bridge_API_Client::normalize_dealer( $this->rawDealer( array( 'transferStatus' => 'maybe' ) ) )['transfer_status'] );
+		$this->assertNull( FFL_Bridge_API_Client::normalize_dealer( $this->rawDealer() )['transfer_status'] );
+	}
+
+	public function test_fallback_uses_the_api_tier_without_a_second_search(): void {
+		$called   = false;
+		$primary  = array(
+			'dealers'     => array(),
+			'unconfirmed' => FFL_Bridge_API_Client::parse_unconfirmed_tier( $this->michiganResponse() ),
+		);
+		$resolved = FFL_Bridge_Network::resolve(
+			$primary,
+			static function () use ( &$called ): array {
+				$called = true;
+				return array( 'dealers' => array() );
+			},
+			FFL_Bridge_Network::SCOPE_ALL,
+			array(),
+			true
+		);
+
+		$this->assertSame( FFL_Bridge_Network::OUTCOME_FALLBACK, $resolved['outcome'] );
+		$this->assertSame( array( 'Macomb Sporting Goods' ), array_column( $resolved['dealers'], 'name' ) );
+		$this->assertSame( array( 'unconfirmed' ), array_column( $resolved['dealers'], 'network' ) );
+		$this->assertFalse( $called );
+	}
+
+	public function test_fallback_lists_transfer_confirmed_dealers_before_the_tier_without_duplicates(): void {
+		$unverified = FFL_Bridge_API_Client::normalize_dealer(
+			$this->rawDealer(
+				array(
+					'id'               => '223e4567-e89b-12d3-a456-426614174000',
+					'licenseNumber'    => '1-23-456-78-9A-05555',
+					'tradeName'        => 'Confirmed Unverified',
+					'acceptsTransfers' => true,
+					'checkoutEligible' => false,
+					'transferStatus'   => 'confirmed',
+				)
+			)
+		);
+		$tier       = FFL_Bridge_API_Client::parse_unconfirmed_tier( $this->michiganResponse() );
+		$resolved   = FFL_Bridge_Network::resolve(
+			array(
+				'dealers'     => array( $unverified ),
+				'unconfirmed' => array_merge( $tier, array( $unverified ) ),
+			),
+			null,
+			FFL_Bridge_Network::SCOPE_ALL,
+			array(),
+			true
+		);
+
+		$this->assertSame( array( 'Confirmed Unverified', 'Macomb Sporting Goods' ), array_column( $resolved['dealers'], 'name' ) );
+		$this->assertSame( array( 'confirmed', 'unconfirmed' ), array_column( $resolved['dealers'], 'transfer_status' ) );
+	}
+
+	public function test_older_api_fallback_search_excludes_declined_dealers(): void {
+		$resolved = FFL_Bridge_Network::resolve(
+			array( 'dealers' => array() ),
+			fn (): array => array(
+				'dealers' => array(
+					FFL_Bridge_API_Client::normalize_dealer( $this->rawDealer( array( 'transferStatus' => 'declined' ) ) ),
+					FFL_Bridge_API_Client::normalize_dealer(
+						$this->rawDealer(
+							array(
+								'id'        => '323e4567-e89b-12d3-a456-426614174000',
+								'tradeName' => 'No Status Field',
+							)
+						)
+					),
+				),
+			),
+			FFL_Bridge_Network::SCOPE_ALL,
+			array(),
+			true
+		);
+
+		$this->assertSame( array( 'No Status Field' ), array_column( $resolved['dealers'], 'name' ) );
+	}
+
+	public function test_eligibility_derives_confirmed_transfer_status_from_detail(): void {
+		$dealer                      = $this->dealer();
+		$dealer['accepts_transfers'] = true;
+
+		$allowed = FFL_Bridge_API_Client::apply_eligibility( $dealer, $this->eligibility( false ), true );
+
+		$this->assertSame( 'confirmed', $allowed['transfer_status'] );
+		$this->assertFalse( $allowed['transfer_confirmed'] );
 	}
 
 	public function test_eligibility_accepts_verified_network_dealer(): void {
@@ -99,18 +234,39 @@ final class SearchOutcomeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( '', FFL_Bridge_Checkout::search_notice( 'confirmed', '48047', 25, true, null, '' ) );
 	}
 
-	public function test_no_dealer_notice_uses_coverage_and_reason_when_present(): void {
-		$counts = FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, array( 'dealers_in_radius' => 41, 'accepting_transfers' => 0 ), '' );
-		$this->assertStringContainsString( 'FFL Bridge lists 41 licensed dealers in this area, but none are confirmed to accept transfers yet.', $counts );
+	public function test_no_dealer_notice_uses_api_coverage_and_reason(): void {
+		$meta   = FFL_Bridge_API_Client::parse_search_meta( $this->michiganResponse() );
+		$counts = FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, $meta['coverage'], $meta['reason'] );
+		$this->assertStringContainsString( 'FFL Bridge lists 412 licensed dealers in this area, but none are confirmed to accept transfers yet.', $counts );
+		$this->assertStringNotContainsString( 'ATF-listed dealers are in this radius', $counts );
 
-		$empty = FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, array( 'dealers_in_radius' => 0 ), '' );
+		$empty = FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, array( 'dealers_in_radius' => 0 ), 'NO_DEALERS_IN_RADIUS' );
 		$this->assertStringContainsString( 'FFL Bridge lists no licensed dealers in this area.', $empty );
 
-		$reason = FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, null, 'NO_VERIFIED_DEALERS_IN_RADIUS' );
-		$this->assertStringContainsString( 'none are verified for checkout yet', $reason );
+		$unverified = FFL_Bridge_Checkout::search_notice(
+			'none',
+			'48047',
+			100,
+			true,
+			array(
+				'dealers_in_radius'   => 412,
+				'accepting_transfers' => 3,
+				'checkout_eligible'   => 0,
+			),
+			''
+		);
+		$this->assertStringContainsString( 'none are verified for checkout yet', $unverified );
+	}
 
-		$unknown = FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, null, 'SOMETHING_NEW' );
-		$this->assertStringNotContainsString( 'FFL Bridge lists', $unknown );
+	public function test_no_dealer_notice_uses_reason_codes_without_counts(): void {
+		$this->assertStringContainsString( 'FFL Bridge lists no licensed dealers', FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, null, 'NO_DEALERS_IN_RADIUS' ) );
+		$this->assertStringContainsString( 'none are confirmed to accept transfers yet', FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, null, 'NO_TRANSFER_CONFIRMED_DEALERS_IN_RADIUS' ) );
+		$this->assertStringContainsString( 'none are verified for checkout yet', FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, null, 'NO_VERIFIED_CHECKOUT_DEALERS_IN_RADIUS' ) );
+
+		$this->assertSame(
+			FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, null, '' ),
+			FFL_Bridge_Checkout::search_notice( 'none', '48047', 100, true, null, 'SOMETHING_NEW' )
+		);
 	}
 
 	public function test_fallback_notice_tells_shopper_to_contact_dealer(): void {
@@ -136,6 +292,88 @@ final class SearchOutcomeTest extends FFL_Bridge_TestCase {
 
 		$this->assertSame( 1, $fallback['fb'] );
 		$this->assertArrayNotHasKey( 'fb', $confirmed );
+	}
+
+	/**
+	 * A search response for ZIP 48047 at 100 miles with acceptsTransfers=true
+	 * and includeUnconfirmed=true, in the shape of ceweldy/ffl-bridge PR #71.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function michiganResponse(): array {
+		return array(
+			'results'         => array(),
+			'total'           => 0,
+			'query'           => array(
+				'center' => array(
+					'lat' => 42.673906,
+					'lng' => -82.774086,
+				),
+				'radius' => 100,
+			),
+			'coverage'        => array(
+				'radiusMiles'                => 100,
+				'directoryDealers'           => 412,
+				'transferConfirmedDealers'   => 0,
+				'verifiedCheckoutDealers'    => 0,
+				'transferDeclinedDealers'    => 0,
+				'transferUnconfirmedDealers' => 412,
+				'emptyReason'                => array(
+					'code'    => 'NO_TRANSFER_CONFIRMED_DEALERS_IN_RADIUS',
+					'message' => '412 ATF-listed dealers are in this radius, but none has confirmed transfer acceptance with FFL Bridge yet. Transfer acceptance is recorded only when a dealer claims their listing or is verified by FFL Bridge.',
+				),
+			),
+			'unconfirmedTier' => array(
+				'label'   => 'Transfer acceptance unconfirmed',
+				'notice'  => 'These are current ATF-listed dealers with no transfer acceptance on record at FFL Bridge. Call the dealer to confirm before relying on them. They are not checkout eligible and cannot be used to create an order.',
+				'total'   => 2,
+				'results' => array(
+					$this->rawDealer(
+						array(
+							'tradeName'        => 'Macomb Sporting Goods',
+							'city'             => 'New Baltimore',
+							'state'            => 'MI',
+							'zip'              => '48047',
+							'transferStatus'   => 'unconfirmed',
+							'network'          => 'directory',
+							'checkoutEligible' => false,
+						)
+					),
+					$this->rawDealer(
+						array(
+							'id'             => '423e4567-e89b-12d3-a456-426614174000',
+							'tradeName'      => 'Declined Dealer',
+							'transferStatus' => 'declined',
+						)
+					),
+				),
+			),
+		);
+	}
+
+	/**
+	 * @param array<string, mixed> $changes Overrides.
+	 * @return array<string, mixed>
+	 */
+	private function rawDealer( array $changes = array() ): array {
+		return array_replace(
+			array(
+				'id'               => '123e4567-e89b-12d3-a456-426614174000',
+				'licenseNumber'    => '1-23-456-78-9A-01234',
+				'licenseType'      => '01',
+				'businessName'     => 'Example Firearms LLC',
+				'tradeName'        => 'Example Arms',
+				'address'          => '123 Main Street',
+				'city'             => 'Chesterfield',
+				'state'            => 'MI',
+				'zip'              => '48047',
+				'phone'            => '586-555-0100',
+				'distance'         => 3.2,
+				'acceptsTransfers' => false,
+				'isActive'         => true,
+			),
+			$changes
+		);
 	}
 
 	/**
