@@ -293,7 +293,13 @@ final class FFL_Bridge_Updater {
 			return $reply;
 		}
 
-		$ours     = is_array( $hook_extra ) && self::basename() === ( $hook_extra['plugin'] ?? '' );
+		$ours = is_array( $hook_extra ) && self::basename() === ( $hook_extra['plugin'] ?? '' );
+		// Another plugin's (or WordPress core's) download: do not touch the
+		// network for the manifest at all.
+		if ( ! $ours && ( ( is_array( $hook_extra ) && isset( $hook_extra['plugin'] ) ) || ! self::is_allowed_url( $package ) ) ) {
+			return $reply;
+		}
+
 		$manifest = self::get_manifest();
 		if ( null === $manifest ) {
 			// Without the manifest there is no checksum, so never let WordPress
