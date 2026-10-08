@@ -35,6 +35,17 @@ final class UpdaterTest extends FFL_Bridge_TestCase {
 		}
 	}
 
+	public function test_stale_update_entry_is_removed_when_no_newer_version_exists(): void {
+		$this->serve( $this->manifest( FFL_BRIDGE_VERSION ) );
+		$stale = (object) array( 'new_version' => '9.9.9' );
+
+		$transient = FFL_Bridge_Updater::inject_update( (object) array( 'response' => array( 'ffl-bridge-for-woocommerce/ffl-bridge.php' => $stale, 'akismet/akismet.php' => $stale ) ) );
+
+		$this->assertArrayNotHasKey( 'ffl-bridge-for-woocommerce/ffl-bridge.php', $transient->response );
+		$this->assertArrayHasKey( 'akismet/akismet.php', $transient->response );
+		$this->assertArrayHasKey( 'ffl-bridge-for-woocommerce/ffl-bridge.php', $transient->no_update );
+	}
+
 	public function test_unreachable_manifest_fails_quietly_and_is_cached_briefly(): void {
 		$original = (object) array( 'response' => array() );
 
@@ -151,7 +162,35 @@ final class UpdaterTest extends FFL_Bridge_TestCase {
 		$this->serve( $this->manifest( '1.3.0' ) );
 
 		$this->assertFalse( FFL_Bridge_Updater::verify_download( false, 'https://downloads.wordpress.org/plugin/akismet.zip', null, array( 'plugin' => 'akismet/akismet.php' ) ) );
-		$this->assertSame( 'prior', FFL_Bridge_Updater::verify_download( 'prior', 'https://fflbridge.com/downloads/ffl-bridge-for-woocommerce-1.3.0.zip' ) );
+		$this->assertSame( '/tmp/akismet.zip', FFL_Bridge_Updater::verify_download( '/tmp/akismet.zip', 'https://downloads.wordpress.org/plugin/akismet.zip', null, array( 'plugin' => 'akismet/akismet.php' ) ) );
+		$this->assertSame( array(), $GLOBALS['ffl_bridge_test_downloads'] );
+	}
+
+	public function test_unavailable_manifest_blocks_this_plugins_update_but_not_others(): void {
+		$ours = FFL_Bridge_Updater::verify_download( false, 'https://fflbridge.com/downloads/ffl-bridge-for-woocommerce-1.3.0.zip', null, array( 'plugin' => 'ffl-bridge-for-woocommerce/ffl-bridge.php' ) );
+		$this->assertInstanceOf( WP_Error::class, $ours );
+		$this->assertSame( 'ffl_bridge_update_manifest', $ours->get_error_code() );
+
+		$this->assertFalse( FFL_Bridge_Updater::verify_download( false, 'https://downloads.wordpress.org/plugin/akismet.zip', null, array( 'plugin' => 'akismet/akismet.php' ) ) );
+	}
+
+	public function test_file_from_an_earlier_download_filter_is_still_checked(): void {
+		$this->serve( $this->manifest( '1.3.0' ) );
+		$bad    = $this->temp( 'cached zip' );
+		$result = FFL_Bridge_Updater::verify_download( $bad, 'https://fflbridge.com/downloads/ffl-bridge-for-woocommerce-1.3.0.zip', null, array( 'plugin' => 'ffl-bridge-for-woocommerce/ffl-bridge.php' ) );
+		$this->assertSame( 'ffl_bridge_update_checksum', $result->get_error_code() );
+		$this->assertFileDoesNotExist( $bad );
+
+		$good     = $this->temp( 'cached zip' );
+		$manifest = array_replace( $this->manifest( '1.3.0' ), array( 'sha256' => hash_file( 'sha256', $good ) ) );
+		$GLOBALS['ffl_bridge_test_site_transients'] = array();
+		$this->serve( $manifest );
+		$this->assertSame( $good, FFL_Bridge_Updater::verify_download( $good, $manifest['download_url'], null, array( 'plugin' => 'ffl-bridge-for-woocommerce/ffl-bridge.php' ) ) );
+		$this->assertSame( array(), $GLOBALS['ffl_bridge_test_downloads'] );
+		unlink( $good );
+
+		$error = new WP_Error( 'earlier', 'Earlier filter failed.' );
+		$this->assertSame( $error, FFL_Bridge_Updater::verify_download( $error, $manifest['download_url'] ) );
 	}
 
 	public function test_auto_updates_are_supported_but_not_forced_on(): void {

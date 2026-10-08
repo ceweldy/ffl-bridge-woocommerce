@@ -193,6 +193,7 @@ final class FFL_Bridge_Updater {
 		} else {
 			$transient->no_update              = is_array( $transient->no_update ?? null ) ? $transient->no_update : array();
 			$transient->no_update[ $basename ] = $item;
+			unset( $transient->response[ $basename ] );
 		}
 
 		return $transient;
@@ -283,13 +284,30 @@ final class FFL_Bridge_Updater {
 	 * @return mixed File path, WP_Error, or the original reply.
 	 */
 	public static function verify_download( mixed $reply, string $package, mixed $upgrader = null, mixed $hook_extra = array() ): mixed { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundBeforeLastUsed -- WordPress hook signature.
-		if ( false !== $reply ) {
+		if ( is_wp_error( $reply ) ) {
 			return $reply;
 		}
 
 		$ours     = is_array( $hook_extra ) && self::basename() === ( $hook_extra['plugin'] ?? '' );
 		$manifest = self::get_manifest();
-		if ( null === $manifest || ( $package !== $manifest['download_url'] && ! $ours ) ) {
+		if ( null === $manifest ) {
+			// Without the manifest there is no checksum, so never let WordPress
+			// install this plugin's package unchecked.
+			return $ours
+				? new WP_Error( 'ffl_bridge_update_manifest', __( 'The FFL Bridge update was not installed because the update information could not be loaded to verify the download. Nothing was changed. Try again later.', 'ffl-bridge-for-woocommerce' ) )
+				: $reply;
+		}
+
+		if ( $package !== $manifest['download_url'] && ! $ours ) {
+			return $reply;
+		}
+
+		// Another filter already supplied a local file: check that file too.
+		if ( is_string( $reply ) ) {
+			return self::check_file( $reply, $manifest['sha256'] );
+		}
+
+		if ( false !== $reply ) {
 			return $reply;
 		}
 
