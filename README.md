@@ -68,7 +68,7 @@ The update checker reads `https://fflbridge.com/api/plugins/woocommerce/update` 
 }
 ```
 
-`download_url` must be HTTPS on fflbridge.com or a subdomain. Before WordPress installs the package, the plugin downloads it and compares its sha256 with the manifest. A mismatch deletes the file and stops the update with an error. The plugin header sets `Update URI` to the manifest address so WordPress.org never offers a different package under the same slug.
+`download_url` must be HTTPS on fflbridge.com or a subdomain. Before WordPress installs the package, the plugin downloads it and compares its sha256 with the manifest. A mismatch deletes the file and stops the update with an error. If the manifest cannot be loaded when an update starts, the update stops instead of installing an unchecked package, and a package supplied by another download filter is checked the same way. The plugin header sets `Update URI` to the manifest address so WordPress.org never offers a different package under the same slug.
 
 The WordPress.org directory build (`composer build:wporg`) leaves out the update checker and the `Update URI` header, because the directory serves its own updates. See [docs/wporg-release.md](docs/wporg-release.md) for the submission checklist and the plan for moving self-hosted installs to WordPress.org updates.
 

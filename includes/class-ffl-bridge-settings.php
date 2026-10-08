@@ -526,7 +526,7 @@ final class FFL_Bridge_Settings {
 								<option value="<?php echo esc_attr( FFL_Bridge_Network::SCOPE_ALL ); ?>" <?php selected( $result_scope, FFL_Bridge_Network::SCOPE_ALL ); ?>><?php echo esc_html__( 'Verified network first, plus labeled directory listings', 'ffl-bridge-for-woocommerce' ); ?></option>
 								<option value="<?php echo esc_attr( FFL_Bridge_Network::SCOPE_VERIFIED ); ?>" <?php selected( $result_scope, FFL_Bridge_Network::SCOPE_VERIFIED ); ?>><?php echo esc_html__( 'Verified checkout network only', 'ffl-bridge-for-woocommerce' ); ?></option>
 							</select>
-							<p class="description"><?php echo esc_html__( 'Directory listings are labeled "Directory listing only" and have no select button. Hiding them keeps results short but may leave shoppers with no visible dealers where the verified network is still small.', 'ffl-bridge-for-woocommerce' ); ?></p>
+							<p class="description"><?php echo esc_html__( 'Directory listings are labeled "Directory listing only" and have no select button. Hiding them keeps results short but may leave shoppers with no visible dealers where the verified network is still small. "Verified checkout network only" also turns off hybrid selection.', 'ffl-bridge-for-woocommerce' ); ?></p>
 						</td>
 					</tr>
 					<tr>

@@ -71,10 +71,14 @@ final class FFL_Bridge_Network {
 	/**
 	 * Determine whether shoppers may select dealers that need follow-up.
 	 *
+	 * The "Verified checkout network only" result scope is an explicit choice
+	 * to hide every other dealer, so it turns hybrid selection off even when
+	 * the dealer mode is hybrid.
+	 *
 	 * @return bool
 	 */
 	public static function hybrid_enabled(): bool {
-		return self::MODE_HYBRID === self::get_dealer_mode();
+		return self::MODE_HYBRID === self::get_dealer_mode() && self::SCOPE_ALL === self::get_result_scope();
 	}
 
 	/**
@@ -120,7 +124,7 @@ final class FFL_Bridge_Network {
 	 * @return bool
 	 */
 	public static function hybrid_offer_pending(): bool {
-		return 'pending' === get_option( self::OFFER_OPTION, '' ) && ! self::hybrid_enabled();
+		return 'pending' === get_option( self::OFFER_OPTION, '' ) && self::MODE_HYBRID !== self::get_dealer_mode();
 	}
 
 	/**
