@@ -100,6 +100,18 @@ final class HybridFlowTest extends FFL_Bridge_TestCase {
 		$this->assertSame( 'merchant_confirmed', FFL_Bridge_API_Client::normalize_dealer( $raw )['transfer_status'] );
 	}
 
+	public function test_verified_only_result_scope_turns_hybrid_selection_off(): void {
+		$GLOBALS['ffl_bridge_test_options'][ FFL_Bridge_Network::MODE_OPTION ] = FFL_Bridge_Network::MODE_HYBRID;
+		$this->assertTrue( FFL_Bridge_Network::hybrid_enabled() );
+
+		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_result_scope'] = FFL_Bridge_Network::SCOPE_VERIFIED;
+		$this->assertFalse( FFL_Bridge_Network::hybrid_enabled() );
+
+		// The hybrid offer is about the mode, so it stays hidden for a hybrid store.
+		$GLOBALS['ffl_bridge_test_options'][ FFL_Bridge_Network::OFFER_OPTION ] = 'pending';
+		$this->assertFalse( FFL_Bridge_Network::hybrid_offer_pending() );
+	}
+
 	public function test_new_install_defaults_to_hybrid(): void {
 		FFL_Bridge_Network::maybe_migrate();
 
