@@ -60,7 +60,7 @@ The update checker reads `https://fflbridge.com/api/plugins/woocommerce/update` 
   "sha256": "64 lowercase hex characters",
   "requires": "6.9",
   "requires_php": "8.3",
-  "tested": "7.0",
+  "tested": "7.1",
   "requires_plugins": ["woocommerce"],
   "wc_requires": "10.8",
   "changelog_html": "<h4>1.2.0</h4><ul><li>...</li></ul>",
@@ -69,6 +69,8 @@ The update checker reads `https://fflbridge.com/api/plugins/woocommerce/update` 
 ```
 
 `download_url` must be HTTPS on fflbridge.com or a subdomain. Before WordPress installs the package, the plugin downloads it and compares its sha256 with the manifest. A mismatch deletes the file and stops the update with an error. The plugin header sets `Update URI` to the manifest address so WordPress.org never offers a different package under the same slug.
+
+The WordPress.org directory build (`composer build:wporg`) leaves out the update checker and the `Update URI` header, because the directory serves its own updates. See [docs/wporg-release.md](docs/wporg-release.md) for the submission checklist and the plan for moving self-hosted installs to WordPress.org updates.
 
 ## External service and privacy
 
@@ -89,7 +91,8 @@ Uninstalling the plugin removes its settings, including a key saved in WordPress
 ```bash
 composer install
 composer check
-bin/build-release.sh
+composer build         # self-hosted ZIP with the update checker
+composer build:wporg   # WordPress.org directory ZIP without it
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the review and verification expectations. Report security issues privately as described in [SECURITY.md](SECURITY.md).

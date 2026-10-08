@@ -1,7 +1,8 @@
 === FFL Bridge for WooCommerce ===
-Tags: woocommerce, ffl, checkout, firearms, dealer
+Contributors: fflbridge
+Tags: woocommerce, ffl, firearms, checkout, dealer
 Requires at least: 6.9
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 8.3
 WC requires at least: 10.8
 WC tested up to: 10.9
@@ -9,100 +10,115 @@ Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Add server-verified FFL dealer selection to WooCommerce checkout and save the selected dealer to the order.
+Let shoppers choose an FFL transfer dealer at WooCommerce checkout, with confirmed dealers first and license follow-up for the rest.
 
 == Description ==
 
-FFL Bridge for WooCommerce lets a shopper search for an FFL dealer during checkout. The plugin sends authenticated dealer requests from WordPress, retrieves the selected dealer record from FFL Bridge, and stores an allowlisted set of dealer fields as WooCommerce order metadata.
+FFL Bridge for WooCommerce adds a transfer dealer step to WooCommerce checkout. Shoppers search by ZIP code and choose the Federal Firearms Licensee (FFL) that will receive their order. The plugin looks dealers up on the FFL Bridge service from your server, checks the chosen dealer again before the order is created, and saves the dealer on the order for your fulfillment team.
 
-Features:
+**Hybrid dealer selection (default for new installs)**
 
-* Classic checkout and WooCommerce Checkout Block support
-* Server-side use of the FFL Bridge API key
-* Search by five-digit ZIP code and supported radius
-* Clear labels for the verified checkout network and public directory listings, which cannot be selected
-* Optional store preferred dealer list, kept in WordPress
-* Clear shopper messaging and an admin coverage notice when no transfer-accepting dealer is found nearby
-* Hybrid dealer selection (default for new installs): confirmed dealers first, plus nearby ATF-listed dealers labeled "License not verified" or "Transfer not confirmed", so checkout is never empty
-* Shopper follow-up instructions on checkout, the thank-you page, and customer emails, asking the dealer to send the store a license copy
-* One-click "Mark transfer confirmed" on the order screen, with an optional private license file
-* Required or optional selection for all products or configured categories
-* Dealer details in order administration, order emails, confirmation pages, and customer order details
-* WooCommerce High-Performance Order Storage compatibility
+* Dealers in the FFL Bridge verified checkout network are listed first and labeled "Confirmed transfer dealer".
+* Nearby ATF-listed dealers that still need follow-up are also selectable, labeled "License not verified" or "Transfer not confirmed", so checkout is never empty where network coverage is thin.
+* Dealers that have told FFL Bridge they do not accept transfers are never shown.
+* A "Confirmed dealers only" mode is available for stores that want only verified dealers.
 
-Requirements:
+**License follow-up without blocking checkout**
 
-* WordPress 6.9 or newer
-* PHP 8.3 or newer
-* WooCommerce 10.8 or newer
-* An FFL Bridge account, API key, and authorized site origin
+* After choosing a dealer that is not fully verified, the shopper is asked to contact the dealer, confirm they will accept the transfer, and have them email (or fax) a copy of their current FFL to your store.
+* The same instructions appear on the order confirmation page, in My Account, and in customer order emails.
+* You choose the license copy email address (the site admin email by default) and an optional fax number.
 
-This plugin records dealer metadata for the retailer's fulfillment workflow. It does not change the order's shipping address, create a shipping label, contact a dealer, transmit an order or documents to a dealer, arrange the transfer, decide which products require a transfer, or guarantee legal compliance.
+**Store tools**
 
-= External service =
+* The order screen shows the selected dealer, the license number, and separate transfer and license status.
+* One click on "Mark transfer confirmed" records who confirmed it and when, with an optional license file stored privately on the order.
+* An admin notice and settings table show ZIP areas where shoppers found no confirmed dealer.
+* A connection test reports dealer coverage for any ZIP code and radius.
 
-Dealer search and verification depend on the hosted FFL Bridge service at `https://www.fflbridge.com/api/v1`. These features do not work when the service is unavailable.
+**Also included**
 
-When a shopper searches, the plugin sends the shopper-entered ZIP code and radius, the site's public origin, the merchant API key, and standard server request metadata. When a shopper selects a dealer, the plugin sends the dealer UUID to retrieve the current record. When store staff mark a transfer as confirmed, the plugin sends the dealer UUID, license number, order number, an optional staff note, and an optional copy of the dealer license to FFL Bridge. The plugin does not intentionally send the shopper's name, email address, billing/shipping address, or payment information to FFL Bridge. Search results may be cached in WordPress for up to five minutes. When a search finds no dealer confirmed to accept transfers, the plugin keeps the first three digits of the ZIP code, the radius, and counts for up to 30 days to show store administrators where coverage is missing. The current selection is held in the WooCommerce session, and the selected dealer fields are stored by the merchant in the WooCommerce order.
+* Classic checkout and the WooCommerce Checkout Block
+* Required or optional selection, for every product or chosen categories
+* Store preferred dealers, listed first when they appear in a search
+* High-Performance Order Storage (HPOS) compatibility
+* The FFL Bridge API key stays on your server and is never sent to the browser
 
-Use of the service is governed by the [FFL Bridge Terms of Service](https://www.fflbridge.com/terms) and [Privacy Policy](https://www.fflbridge.com/privacy).
+This plugin records dealer details for your fulfillment workflow. It does not change the order's shipping address, create shipping labels, contact dealers, send orders or documents to dealers, arrange transfers, decide which products require a transfer, or guarantee legal compliance.
+
+== External services ==
+
+This plugin connects to the FFL Bridge service operated by FFL Bridge (https://www.fflbridge.com). An FFL Bridge account and API key are required. Dealer search and verification do not work when the service is unavailable.
+
+Data is sent to `https://www.fflbridge.com/api/v1` only in these cases:
+
+* **Dealer search at checkout**: the shopper-entered ZIP code and search radius, the store's site address (origin), the store's API key, and standard request headers.
+* **Dealer selection and order placement**: the selected dealer's FFL Bridge identifier, to retrieve and re-check the current dealer record.
+* **Connection and coverage test in settings**: the ZIP code and radius entered by the store administrator.
+* **"Mark transfer confirmed" by store staff**: the dealer identifier, license number, order number, an optional staff note, and an optional copy of the dealer license.
+
+The plugin does not send shopper names, email addresses, billing or shipping addresses, or payment details to FFL Bridge.
+
+Stored in WordPress: search results are cached for up to five minutes; the current selection is kept in the WooCommerce session; dealer details are saved on the order; and when a search finds no confirmed dealer, the first three digits of the ZIP code, the radius, and counts are kept for up to 30 days so administrators can see coverage gaps.
+
+FFL Bridge [Terms of Service](https://www.fflbridge.com/terms) and [Privacy Policy](https://www.fflbridge.com/privacy).
 
 = Legal and fulfillment notice =
 
-Dealer-directory results and selection status are provided for workflow purposes. They are not legal advice, a warranty, or a guarantee of current license status, dealer acceptance, transfer eligibility, or transaction compliance. The retailer must independently confirm the receiving dealer and satisfy all applicable fulfillment and legal requirements before shipment.
+Dealer results and status labels support your workflow. They are not legal advice, a warranty, or a guarantee of current license status, dealer acceptance, transfer eligibility, or transaction compliance. Confirm the receiving dealer and meet every applicable requirement before shipment.
 
 == Installation ==
 
-1. Download the versioned plugin ZIP from the GitHub Releases page.
-2. In WordPress administration, open Plugins > Add Plugin > Upload Plugin.
-3. Upload the ZIP, install it, and activate it.
-4. Open WooCommerce > FFL Bridge.
-5. Configure the API key, product categories, and whether selection is required.
-6. Test search and order placement in a staging environment before production use.
-
-For better credential isolation, define `FFL_BRIDGE_API_KEY` in `wp-config.php` instead of saving the key in the WordPress options table.
+1. In WordPress, open Plugins > Add New Plugin, search for "FFL Bridge for WooCommerce", then install and activate it. WooCommerce 10.8 or newer must be active.
+2. Open WooCommerce > FFL Bridge and enter your FFL Bridge API key. For stronger separation, define `FFL_BRIDGE_API_KEY` in `wp-config.php` instead.
+3. Choose the dealer selection mode, the license copy email and fax, the product categories that need a dealer, and whether a selection is required.
+4. Use the connection and coverage test with a ZIP code your customers use.
+5. Place a test order in a staging site before going live.
 
 == Frequently Asked Questions ==
 
-= What must I do when upgrading from 1.0.x? =
+= Do I need an FFL Bridge account? =
 
-Version 1.0.x sent the API key to the checkout browser. Revoke any key that was used with 1.0.x, committed to a repository, or included in a distributed build, then create a replacement before using 1.1.0. An upgrade cannot invalidate an already exposed credential.
+Yes. Dealer search and verification use the FFL Bridge service, which needs an account, an API key, and your store's site address added to that key.
+
+= Can shoppers check out when no confirmed dealer is nearby? =
+
+Yes, in hybrid mode. Confirmed dealers are listed first, and nearby ATF-listed dealers are offered with a "License not verified" or "Transfer not confirmed" label. After choosing one, the shopper sees follow-up instructions. In "Confirmed dealers only" mode the shopper sees a message instead, and administrators see a coverage notice.
+
+= What do the labels mean? =
+
+"Confirmed transfer dealer" means the dealer is in the FFL Bridge verified checkout network. "License not verified" means the dealer confirmed transfers with FFL Bridge but its current license copy has not been verified. "Transfer not confirmed" means FFL Bridge has no transfer acceptance on record for the dealer.
+
+= How does my store confirm a transfer? =
+
+Open the order. The dealer panel shows the license number and status. Click "Mark transfer confirmed", optionally attaching the license copy (PDF, JPG, or PNG, up to 5 MB). The plugin records who confirmed it and when, adds an order note, and stores the file privately. The plugin never contacts dealers on its own.
 
 = Does the plugin support the Checkout Block? =
 
-Yes. Version 1.1.0 supports both classic WooCommerce checkout and the WooCommerce Checkout Block.
+Yes. Both classic checkout and the WooCommerce Checkout Block are supported.
 
-= Why can some dealers not be selected? =
+= Does selecting a dealer change the shipping address? =
 
-Search covers the public FFL directory. Only dealers in the FFL Bridge verified checkout network can be selected, because they have a current, verified license copy on file and accept transfers. Other dealers are labeled "Directory listing only". The settings page can hide them, and its connection test shows how many dealers near a sample ZIP code are in the verified network.
+No. The dealer is saved as order details. Your staff follow your own shipping and dealer coordination process.
 
-= What happens when no transfer-accepting dealer is nearby? =
+= Does a selectable dealer guarantee I can ship the order? =
 
-In hybrid mode (the default for new installs) shoppers can still choose a nearby ATF-listed dealer. Dealers in the verified checkout network are listed first. Others are labeled "License not verified" or "Transfer not confirmed", and after choosing one the shopper is asked to contact the dealer, confirm they will accept the transfer, and have them send a copy of their current FFL to the store's license email or fax. Checkout is not blocked. In "Confirmed dealers only" mode the shopper sees a message instead, and store administrators see a coverage notice either way.
-
-= How does the store confirm a transfer? =
-
-Open the order. The dealer panel shows the license number and whether the transfer is confirmed. Click "Mark transfer confirmed", optionally attaching the license copy (PDF, JPG, or PNG, up to 5 MB). The plugin records who confirmed it and when, adds an order note, stores the file privately, and reports the confirmation to FFL Bridge when the API supports it. The plugin never contacts dealers on its own.
-
-= Does selecting a dealer change the shipping destination? =
-
-No. The plugin stores the dealer as order metadata. Store staff must follow their own verified shipping and dealer-coordination process.
-
-= Does a selectable result guarantee that I can ship the order? =
-
-No. Confirm the dealer, license information, willingness to accept the transfer, destination, and all applicable requirements before shipment.
-
-= What shopper information is sent to FFL Bridge? =
-
-The shopper-entered search ZIP code and radius are sent for dealer search, and the dealer UUID is sent for selection verification. The plugin does not intentionally send shopper names, email addresses, billing/shipping addresses, or payment data to FFL Bridge. See the External service section for the complete disclosure.
+No. Confirm the dealer, license, willingness to accept the transfer, destination, and all applicable requirements before shipment.
 
 = What happens if FFL Bridge is unavailable? =
 
-New searches and dealer verification cannot complete until the service is available. The plugin does not bypass a required dealer selection.
+New searches and dealer checks cannot complete until the service is back. The plugin does not bypass a required dealer selection.
 
 = What happens when I uninstall the plugin? =
 
-The uninstall process removes the plugin settings, including an API key saved in WordPress. Dealer metadata already attached to orders is retained as part of the merchant's order record.
+Uninstalling removes the plugin settings, including an API key saved in WordPress. Dealer details already saved on orders, and license files attached to orders, are kept as part of your order records.
+
+== Screenshots ==
+
+1. Checkout dealer search in hybrid mode, with the confirmed dealer first and dealers that need follow-up labeled.
+2. Follow-up instructions shown after the shopper chooses a dealer that is not confirmed.
+3. The order screen with dealer status and the "Mark transfer confirmed" action.
+4. Settings for dealer selection mode and the license copy email and fax.
 
 == Changelog ==
 
@@ -113,7 +129,7 @@ The uninstall process removes the plugin settings, including an API key saved in
 * "Mark transfer confirmed" on the order screen with an optional private license file, reported to FFL Bridge when available.
 * Clearer messages and an admin coverage notice when no transfer-accepting dealer is nearby.
 * Order records keep transfer acceptance, license verification, and selection basis separate.
-* Automatic updates from FFL Bridge with sha256 package verification. WordPress auto-updates can be turned on per site.
+* Copies downloaded from fflbridge.com can update themselves with sha256 package verification. Copies installed from WordPress.org update through WordPress.org.
 
 = 1.1.0 =
 
@@ -133,7 +149,7 @@ The uninstall process removes the plugin settings, including an API key saved in
 
 = 1.2.0 =
 
-Adds hybrid dealer selection and automatic updates from FFL Bridge. Sites on 1.1.0 or older must install 1.2.0 manually once; later versions then appear under Dashboard > Updates.
+Adds hybrid dealer selection, license follow-up instructions, and one-click transfer confirmation. Existing stores keep their current dealer setting.
 
 = 1.1.0 =
 
