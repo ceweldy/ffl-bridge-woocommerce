@@ -66,13 +66,14 @@ Until the secrets exist, tags only make GitHub releases. Once they exist, every 
 
 ## Moving self-hosted installs to WordPress.org updates
 
-Installs from fflbridge.com carry `Update URI: https://fflbridge.com/...`. WordPress never offers a WordPress.org update to a plugin whose `Update URI` points elsewhere, so those stores keep using the fflbridge.com checker until they install a build without it. The plan is one final self-hosted release:
+Installs from fflbridge.com carry `Update URI: https://fflbridge.com/...`. WordPress never offers a WordPress.org update to a plugin whose `Update URI` points elsewhere, so those stores keep using the fflbridge.com checker until they install a build without it. The checker only offers a version strictly newer than the installed one, so the transition package must use a version that no self-hosted store already has. The plan:
 
-1. Ship version N to WordPress.org (first directory release, or any later one).
-2. Copy that exact directory ZIP (`ffl-bridge-for-woocommerce-N-wporg.zip`) to `https://fflbridge.com/downloads/` and point the manifest at it: `version` N, `download_url` to that file, `sha256` from its `.sha256`. The checker only accepts HTTPS downloads on fflbridge.com, which is why the file must be hosted there.
-3. Self-hosted stores see N as a normal update. The checker verifies the sha256 and WordPress installs it. N has no `Update URI` and no checker, so the store now gets updates from WordPress.org under the same slug, and settings and order data stay as they are.
-4. Leave the manifest at N. Stores still on 1.2.0 to N-1 will reach N when they next update and then switch over. Installs older than 1.2.0 have no checker and need one manual update, either from fflbridge.com or by installing from the directory.
-5. Stop building self-hosted ZIPs after N unless a store needs one; the build target stays available.
+1. Let L be the last version published to the fflbridge.com manifest (the release workflow attaches both ZIPs to every tag, but only the manifest decides what self-hosted stores install).
+2. Release the next version M (M > L) as usual. Publish it to WordPress.org, and do not publish a self-hosted M manifest entry.
+3. Copy the M directory ZIP (`ffl-bridge-for-woocommerce-M-wporg.zip`) to `https://fflbridge.com/downloads/` and point the manifest at it: `version` M, `download_url` to that file, `sha256` from its `.sha256`. The checker only accepts HTTPS downloads on fflbridge.com, which is why the file must be hosted there.
+4. Self-hosted stores on 1.2.0 to L see M as a normal update. The checker verifies the sha256 and WordPress installs it. M has no `Update URI` and no checker, so the store now gets updates from WordPress.org under the same slug, and settings and order data stay as they are.
+5. Leave the manifest at M from then on. Installs older than 1.2.0 have no checker and need one manual update, either from fflbridge.com or by installing from the directory.
+6. Stop publishing self-hosted ZIPs to the manifest after L; the build target stays available.
 
 ## What the directory build must keep passing
 
