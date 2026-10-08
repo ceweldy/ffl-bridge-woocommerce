@@ -43,6 +43,8 @@ final class FFL_Bridge_Transfer_Confirmation {
 		add_action( 'wp_ajax_ffl_bridge_confirm_transfer', array( __CLASS__, 'ajax_confirm' ) );
 		add_action( 'admin_post_ffl_bridge_license_file', array( __CLASS__, 'download_license_file' ) );
 		add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue_assets' ) );
+		add_action( 'woocommerce_before_delete_order', array( __CLASS__, 'delete_order_file' ) );
+		add_action( 'before_delete_post', array( __CLASS__, 'delete_post_file' ) );
 	}
 
 	/**
@@ -196,6 +198,10 @@ final class FFL_Bridge_Transfer_Confirmation {
 		$order->update_meta_data( '_ffl_bridge_store_confirmed_by_name', $user_name );
 		$order->update_meta_data( '_ffl_bridge_transfer_status', 'confirmed' );
 		if ( null !== $file ) {
+			$previous = self::resolve_path( $order->get_meta( '_ffl_bridge_license_file' ) );
+			if ( '' !== $previous && basename( $previous ) !== ( $file['stored'] ?? '' ) ) {
+				wp_delete_file( $previous );
+			}
 			$order->update_meta_data( '_ffl_bridge_license_file', array_diff_key( $file, array( 'path' => true ) ) );
 		}
 
@@ -392,6 +398,38 @@ final class FFL_Bridge_Transfer_Confirmation {
 
 		$path = $dir . '/' . $record['stored'];
 		return is_file( $path ) ? $path : '';
+	}
+
+	/**
+	 * Delete an order's private license file before the order is deleted.
+	 *
+	 * Runs for HPOS and for post storage, so it must be safe to call twice.
+	 *
+	 * @param mixed $order_id Order ID.
+	 * @return void
+	 */
+	public static function delete_order_file( mixed $order_id ): void {
+		$order = is_numeric( $order_id ) ? wc_get_order( (int) $order_id ) : false;
+		if ( ! $order ) {
+			return;
+		}
+
+		$path = self::resolve_path( $order->get_meta( '_ffl_bridge_license_file' ) );
+		if ( '' !== $path ) {
+			wp_delete_file( $path );
+		}
+	}
+
+	/**
+	 * Delete the license file when an order stored as a post is deleted.
+	 *
+	 * @param mixed $post_id Post ID.
+	 * @return void
+	 */
+	public static function delete_post_file( mixed $post_id ): void {
+		if ( is_numeric( $post_id ) && 'shop_order' === get_post_type( (int) $post_id ) ) {
+			self::delete_order_file( (int) $post_id );
+		}
 	}
 
 	/**
