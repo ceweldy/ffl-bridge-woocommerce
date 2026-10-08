@@ -146,10 +146,16 @@ final class TransferConfirmationTest extends FFL_Bridge_TestCase {
 
 		FFL_Bridge_Transfer_Confirmation::confirm( $order, FFL_Bridge_Order::get_ffl_data( $order ), 7, 'Store Manager', $file, '' );
 
-		$body = json_decode( $GLOBALS['ffl_bridge_test_http'][0]['args']['body'], true );
-		$this->assertSame( 'license.pdf', $body['licenseFile']['filename'] );
-		$this->assertSame( 'application/pdf', $body['licenseFile']['contentType'] );
-		$this->assertSame( (string) file_get_contents( $path ), base64_decode( $body['licenseFile']['contentBase64'] ) );
+		$args = $GLOBALS['ffl_bridge_test_http'][0]['args'];
+		$this->assertMatchesRegularExpression( '/\Amultipart\/form-data; boundary=(ffl-bridge-[0-9a-f]{24})\z/', $args['headers']['Content-Type'] );
+		preg_match( '/boundary=(.+)\z/', $args['headers']['Content-Type'], $match );
+		$parts = $this->parse_multipart( $args['body'], $match[1] );
+		$this->assertSame( '1-23-456-78-9A-01234', $parts['licenseNumber']['body'] );
+		$this->assertSame( 'true', $parts['acceptsTransfers']['body'] );
+		$this->assertSame( '501', $parts['orderReference']['body'] );
+		$this->assertSame( (string) file_get_contents( $path ), $parts['licenseFile']['body'] );
+		$this->assertStringContainsString( 'filename="license.pdf"', $parts['licenseFile']['headers'] );
+		$this->assertStringContainsString( 'Content-Type: application/pdf', $parts['licenseFile']['headers'] );
 		$this->assertArrayNotHasKey( 'path', $order->get_meta( '_ffl_bridge_license_file' ) );
 		$this->assertStringContainsString( 'License copy attached: yes.', $order->notes[0] );
 	}
@@ -199,6 +205,25 @@ final class TransferConfirmationTest extends FFL_Bridge_TestCase {
 		$this->assertSame( '', FFL_Bridge_Transfer_Confirmation::resolve_path( array( 'stored' => '../../wp-config.php' ) ) );
 		$this->assertSame( '', FFL_Bridge_Transfer_Confirmation::resolve_path( array( 'stored' => str_repeat( 'c', 32 ) . '.php' ) ) );
 		$this->assertSame( '', FFL_Bridge_Transfer_Confirmation::resolve_path( 'not a record' ) );
+	}
+
+	/**
+	 * @return array<string, array{headers: string, body: string}>
+	 */
+	private function parse_multipart( string $body, string $boundary ): array {
+		$parts = array();
+		foreach ( explode( '--' . $boundary, $body ) as $chunk ) {
+			if ( ! str_contains( $chunk, "\r\n\r\n" ) ) {
+				continue;
+			}
+			list( $headers, $content ) = explode( "\r\n\r\n", ltrim( $chunk, "\r\n" ), 2 );
+			preg_match( '/name="([^"]+)"/', $headers, $name );
+			$parts[ $name[1] ] = array(
+				'headers' => $headers,
+				'body'    => substr( $content, 0, -2 ),
+			);
+		}
+		return $parts;
 	}
 
 	private function call(): FFL_Bridge_Test_Json {

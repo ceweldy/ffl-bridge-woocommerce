@@ -69,6 +69,37 @@ final class HybridFlowTest extends FFL_Bridge_TestCase {
 		$this->assertSame( 'transfer_unconfirmed', FFL_Bridge_Network::follow_up_state( array( 'network' => 'unconfirmed', 'transfer_status' => 'unconfirmed' ) ) );
 	}
 
+	public function test_merchant_confirmed_dealers_rank_with_transfer_confirmed_dealers(): void {
+		$resolved = FFL_Bridge_Network::resolve(
+			array(
+				'dealers'     => array(),
+				'unconfirmed' => array(
+					$this->dealer( 'unconfirmed', '00001', false, 'unconfirmed' ),
+					$this->dealer( 'store-confirmed', '00002', false, 'merchant_confirmed' ),
+				),
+			),
+			null,
+			FFL_Bridge_Network::SCOPE_ALL,
+			array(),
+			true
+		);
+
+		$this->assertSame( array( 'store-confirmed', 'unconfirmed' ), array_column( $resolved['dealers'], 'name' ) );
+		$this->assertSame( 'license_unverified', FFL_Bridge_Network::follow_up_state( $resolved['dealers'][0] ) );
+
+		$raw = array(
+			'id'             => '123e4567-e89b-12d3-a456-426614174000',
+			'licenseNumber'  => '1-23-456-78-9A-01234',
+			'tradeName'      => 'Store Confirmed',
+			'address'        => '1 Main',
+			'city'           => 'Chesterfield',
+			'state'          => 'MI',
+			'zip'            => '48047',
+			'transferStatus' => 'merchant_confirmed',
+		);
+		$this->assertSame( 'merchant_confirmed', FFL_Bridge_API_Client::normalize_dealer( $raw )['transfer_status'] );
+	}
+
 	public function test_new_install_defaults_to_hybrid(): void {
 		FFL_Bridge_Network::maybe_migrate();
 
