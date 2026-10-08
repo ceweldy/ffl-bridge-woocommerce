@@ -33,7 +33,7 @@ The directory build removes the updater file, the block in `ffl-bridge.php` betw
    composer check
    composer build:wporg
    ```
-   Then run Plugin Check (the "Plugin Check" plugin, or `wp plugin check ffl-bridge-for-woocommerce`) against the unpacked `dist/wporg-build/ffl-bridge-for-woocommerce` on a current WordPress. It must report no errors. Every pull request also runs it in the `WordPress.org` workflow.
+   Then run Plugin Check (the "Plugin Check" plugin, or `wp plugin check ffl-bridge-for-woocommerce`) against the unpacked `dist/wporg-build/ffl-bridge-for-woocommerce` on a current WordPress. It must report no errors. Every pull request and every tag also runs it in the `WordPress.org` workflow.
 
 ## Submitting (Connor)
 
@@ -52,7 +52,7 @@ The directory build removes the updater file, the block in `ffl-bridge.php` betw
    Optionally add yourself as a required reviewer on that environment so every deploy waits for a click.
 3. From then on, pushing a tag `vX.Y.Z` does this:
    * `Release` workflow: checks the source, builds both ZIPs, and creates the GitHub release with both ZIPs and their `.sha256` files.
-   * `WordPress.org` workflow, `deploy` job: checks that the tag matches the plugin header version and `Stable tag`, builds the directory package, and commits it to SVN `trunk`, `tags/X.Y.Z`, and `assets/` (from `.wordpress-org/`) using 10up/action-wordpress-plugin-deploy. Without the two secrets the job prints a notice and does nothing.
+   * `WordPress.org` workflow: the `dry-run` job runs `composer check`, `composer audit`, the JavaScript syntax check, the directory build, and Plugin Check on the tagged commit. Only when it passes does the `deploy` job run. It checks that the tag matches the plugin header version and `Stable tag`, builds the directory package, and commits it to SVN `trunk`, `tags/X.Y.Z`, and `assets/` (from `.wordpress-org/`) using 10up/action-wordpress-plugin-deploy. Without the two secrets the job prints a notice and does nothing.
 
 Until the secrets exist, tags only make GitHub releases. Once they exist, every `v*` tag publishes to WordPress.org, so tag only commits that are ready to ship.
 

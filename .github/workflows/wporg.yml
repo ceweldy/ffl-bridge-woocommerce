@@ -19,7 +19,6 @@ env:
 jobs:
   dry-run:
     name: Directory build dry run
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -27,7 +26,24 @@ jobs:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate and check source
+        run: |
+          composer validate --strict
+          composer install --no-interaction --no-progress --prefer-dist
+          composer audit --locked --no-interaction
+          composer check
+          find assets/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+
       - name: Build the directory package
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: bin/build-release.sh --target=wporg
 
       - name: Verify the directory package
@@ -59,6 +75,7 @@ jobs:
 
   deploy:
     name: Deploy to WordPress.org
+    needs: dry-run
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
