@@ -127,6 +127,41 @@ PY
 	fi
 fi
 
+# readme.txt blocks between <!-- self-hosted-only:start --> and
+# <!-- self-hosted-only:end --> describe only the self-hosted build. The
+# WordPress.org build drops each block; the self-hosted build drops only the
+# marker lines and keeps the text.
+BUILD_TARGET="${build_target}" PACKAGE_DIR="${package_dir}" python3 <<'PY'
+import os
+import pathlib
+import re
+
+readme = pathlib.Path(os.environ["PACKAGE_DIR"]) / "readme.txt"
+source = readme.read_text(encoding="utf-8")
+start = re.compile(r"^<!-- self-hosted-only:start -->[ \t]*$", re.M)
+end = re.compile(r"^<!-- self-hosted-only:end -->[ \t]*$", re.M)
+if len(start.findall(source)) != len(end.findall(source)):
+    raise SystemExit("readme.txt has unbalanced self-hosted-only markers.")
+
+if os.environ["BUILD_TARGET"] == "wporg":
+    block = re.compile(r"^<!-- self-hosted-only:start -->[ \t]*\n.*?^<!-- self-hosted-only:end -->[ \t]*\n\n?", re.M | re.S)
+    source = block.sub("", source)
+else:
+    marker = re.compile(r"^<!-- self-hosted-only:(?:start|end) -->[ \t]*\n", re.M)
+    source = marker.sub("", source)
+
+if "self-hosted-only" in source:
+    raise SystemExit("readme.txt still contains a self-hosted-only marker.")
+readme.write_text(source, encoding="utf-8")
+PY
+
+if [[ "${build_target}" == "wporg" ]]; then
+	if grep -RIn 'api/plugins/woocommerce/update' "${package_dir}"; then
+		printf 'The WordPress.org build still references the self-hosted update URL (api/plugins/woocommerce/update).\n' >&2
+		exit 1
+	fi
+fi
+
 for required_file in ffl-bridge.php readme.txt LICENSE; do
 	if [[ ! -f "${package_dir}/${required_file}" ]]; then
 		printf 'Required release file is missing or untracked: %s\n' "${required_file}" >&2
