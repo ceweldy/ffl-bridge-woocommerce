@@ -1,5 +1,5 @@
 === FFL Bridge for WooCommerce ===
-Contributors: fflbridge
+Contributors: apisdynamics
 Tags: woocommerce, ffl, firearms, checkout, dealer
 Requires at least: 6.9
 Tested up to: 7.1
@@ -59,7 +59,9 @@ Data is sent to `https://www.fflbridge.com/api/v1` only in these cases:
 
 The plugin does not send shopper names, email addresses, billing or shipping addresses, or payment details to FFL Bridge.
 
+<!-- self-hosted-only:start -->
 Copies downloaded from fflbridge.com, not the copy from WordPress.org, also check `https://fflbridge.com/api/plugins/woocommerce/update` for new versions when WordPress checks for plugin updates (at most every 12 hours, or every hour after a failed check), and download the update package from fflbridge.com when an administrator installs an update. That check sends only the plugin version in its user agent and standard request headers; it sends no API key, store data, or shopper data.
+<!-- self-hosted-only:end -->
 
 Stored in WordPress: search results are cached for up to five minutes; the current selection is kept in the WooCommerce session; dealer details are saved on the order; and when a search finds no confirmed dealer, the first three digits of the ZIP code, the radius, and counts are kept for up to 31 days (30 days per search, kept by day) so administrators can see coverage gaps.
 
