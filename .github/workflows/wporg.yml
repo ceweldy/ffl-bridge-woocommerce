@@ -1,0 +1,135 @@
+name: WordPress.org
+
+on:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wporg-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PLUGIN_SLUG: ffl-bridge-for-woocommerce
+
+jobs:
+  dry-run:
+    name: Directory build dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate and check source
+        run: |
+          composer validate --strict
+          composer install --no-interaction --no-progress --prefer-dist
+          composer audit --locked --no-interaction
+          composer check
+          find assets/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Build the directory package
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: bin/build-release.sh --target=wporg
+
+      - name: Verify the directory package
+        shell: bash
+        run: |
+          version="$(sed -n 's/^[[:space:]]*\* Version:[[:space:]]*//p' ffl-bridge.php | head -n 1 | tr -d '\r')"
+          build="dist/wporg-build/${PLUGIN_SLUG}"
+          artifact="dist/${PLUGIN_SLUG}-${version}-wporg.zip"
+          test -f "${artifact}"
+          (cd dist && sha256sum --check "${PLUGIN_SLUG}-${version}-wporg.zip.sha256")
+          test ! -e "${build}/includes/class-ffl-bridge-updater.php"
+          if grep -n '^ \* Update URI:' "${build}/ffl-bridge.php"; then
+            echo 'The directory build still declares Update URI.' >&2
+            exit 1
+          fi
+          if [[ -d .wordpress-org ]]; then
+            for asset in banner-772x250.png banner-1544x500.png icon-128x128.png icon-256x256.png; do
+              test -f ".wordpress-org/${asset}"
+            done
+          fi
+          printf 'Directory package: %s\n' "$(cat "${artifact}.sha256")" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Run Plugin Check
+        uses: WordPress/plugin-check-action@10857da14b6c2246d15402b3e69f777edcf8c12e # v1.1.9
+        with:
+          build-dir: dist/wporg-build/ffl-bridge-for-woocommerce
+          slug: ffl-bridge-for-woocommerce
+          include-experimental: 'true'
+
+  deploy:
+    name: Deploy to WordPress.org
+    needs: dry-run
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: wordpress-org
+
+    steps:
+      - name: Check for SVN credentials
+        id: credentials
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -z "${SVN_USERNAME}" || -z "${SVN_PASSWORD}" ]]; then
+            echo '::notice::SVN_USERNAME or SVN_PASSWORD is not set. Skipping the WordPress.org deploy.'
+            echo 'available=false' >> "${GITHUB_OUTPUT}"
+          else
+            echo 'available=true' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Check out source
+        if: steps.credentials.outputs.available == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check the tag against the plugin header and Stable tag
+        if: steps.credentials.outputs.available == 'true'
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          header_version="$(sed -n 's/^[[:space:]]*\* Version:[[:space:]]*//p' ffl-bridge.php | head -n 1 | tr -d '\r')"
+          stable_tag="$(sed -n 's/^Stable tag:[[:space:]]*//p' readme.txt | head -n 1 | tr -d '\r')"
+          if [[ "${tag_version}" != "${header_version}" || "${tag_version}" != "${stable_tag}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} must match the plugin header (${header_version}) and Stable tag (${stable_tag})." >&2
+            exit 1
+          fi
+
+      - name: Build the directory package
+        if: steps.credentials.outputs.available == 'true'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bin/build-release.sh --target=wporg
+
+      - name: Install Subversion
+        if: steps.credentials.outputs.available == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y subversion
+
+      - name: Deploy trunk, the tag, and assets to SVN
+        if: steps.credentials.outputs.available == 'true'
+        uses: 10up/action-wordpress-plugin-deploy@54bd289b8525fd23a5c365ec369185f2966529c2 # 2.3.0
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: ffl-bridge-for-woocommerce
+          BUILD_DIR: dist/wporg-build/ffl-bridge-for-woocommerce
+          ASSETS_DIR: .wordpress-org

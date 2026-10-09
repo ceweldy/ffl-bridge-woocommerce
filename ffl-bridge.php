@@ -89,6 +89,7 @@ function ffl_bridge_init(): void {
 }
 add_action( 'plugins_loaded', 'ffl_bridge_init', 20 );
 
+// ffl-bridge:self-hosted-updater:start (the WordPress.org build removes this block).
 /**
  * Load the self-hosted updater when it is part of this build.
  *
@@ -105,6 +106,7 @@ function ffl_bridge_init_updater(): void {
 	}
 }
 add_action( 'plugins_loaded', 'ffl_bridge_init_updater', 5 );
+// ffl-bridge:self-hosted-updater:end.
 
 /**
  * Add default options without overwriting an existing installation.

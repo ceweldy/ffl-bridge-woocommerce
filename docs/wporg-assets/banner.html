@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>FFL Bridge for WooCommerce banner (draft)</title>
+<style>
+  html, body { margin: 0; width: 772px; height: 250px; overflow: hidden; }
+  body {
+    background: radial-gradient(circle at 85% 20%, #1d2328 0, #0b0f12 60%);
+    color: #f4f1ea;
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    position: relative;
+  }
+  /* WordPress.org draws the plugin name over the lower left of the banner, so
+     the artwork keeps that area quiet. */
+  .logo { position: absolute; left: 40px; top: 28px; width: 240px; }
+  .rule { position: absolute; left: 44px; top: 106px; width: 56px; height: 4px; background: #c79a48; }
+  h1 { position: absolute; left: 44px; top: 118px; margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; width: 440px; }
+  .badge { position: absolute; right: 40px; top: 40px; width: 210px; padding: 16px 18px; border: 1px solid #343a3f; border-radius: 10px; background: #171c20; font-size: 14px; line-height: 1.5; }
+  .badge b { display: block; color: #d6b46a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #c79a48; flex: none; }
+  .dot.open { background: transparent; border: 2px solid #aaa69d; width: 4px; height: 4px; }
+</style>
+</head>
+<body>
+  <img class="logo" src="logo-horizontal-reversed.svg" alt="FFL Bridge">
+  <div class="rule"></div>
+  <h1>Confirmed transfer dealers first, license follow-up for the rest.</h1>
+  <div class="badge">
+    <b>Checkout</b>
+    <div class="row"><span class="dot"></span>Confirmed transfer dealer</div>
+    <div class="row"><span class="dot open"></span>License not verified</div>
+    <div class="row"><span class="dot open"></span>Transfer not confirmed</div>
+  </div>
+</body>
+</html>

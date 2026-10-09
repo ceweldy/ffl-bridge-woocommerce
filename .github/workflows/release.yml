@@ -37,21 +37,29 @@ jobs:
           composer check
           find assets/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 
-      - name: Build deterministic release archive
+      - name: Build deterministic release archives
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: bin/build-release.sh
+        run: |
+          bin/build-release.sh --target=self-hosted
+          bin/build-release.sh --target=wporg
 
-      - name: Verify release archive
+      - name: Verify release archives
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          artifact="dist/ffl-bridge-for-woocommerce-${version}.zip"
-          test -f "${artifact}"
-          test -f "${artifact}.sha256"
-          unzip -t "${artifact}"
-          if unzip -Z1 "${artifact}" | grep -E '(^|/)(\.distignore|\.git|\.github|bin|tests|vendor|composer\.(json|lock)|php(cs|unit)\.xml\.dist|CHANGELOG\.md|CONTRIBUTING\.md|README\.md|SECURITY\.md)(/|$)'; then
-            echo 'Release archive contains a development-only path.' >&2
+          for artifact in "dist/ffl-bridge-for-woocommerce-${version}.zip" "dist/ffl-bridge-for-woocommerce-${version}-wporg.zip"; do
+            test -f "${artifact}"
+            test -f "${artifact}.sha256"
+            unzip -t "${artifact}"
+            if unzip -Z1 "${artifact}" | grep -E '(^|/)(\.distignore|\.git|\.github|\.wordpress-org|bin|docs|tests|vendor|composer\.(json|lock)|php(cs|unit)\.xml\.dist|CHANGELOG\.md|CONTRIBUTING\.md|README\.md|SECURITY\.md)(/|$)'; then
+              echo "${artifact} contains a development-only path." >&2
+              exit 1
+            fi
+          done
+          wporg="dist/ffl-bridge-for-woocommerce-${version}-wporg.zip"
+          if unzip -Z1 "${wporg}" | grep -F 'class-ffl-bridge-updater.php'; then
+            echo 'The WordPress.org archive contains the self-hosted update checker.' >&2
             exit 1
           fi
 
@@ -86,7 +94,9 @@ jobs:
         run: |
           cd dist
           sha256sum --check ./*.sha256
-          unzip -t ./*.zip
+          for archive in ./*.zip; do
+            unzip -t "${archive}"
+          done
 
       - name: Publish GitHub release
         env:
@@ -96,9 +106,12 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           artifact="dist/ffl-bridge-for-woocommerce-${version}.zip"
+          wporg="dist/ffl-bridge-for-woocommerce-${version}-wporg.zip"
           gh release create "${GITHUB_REF_NAME}" \
             "${artifact}" \
             "${artifact}.sha256" \
+            "${wporg}" \
+            "${wporg}.sha256" \
             --generate-notes \
             --title "FFL Bridge for WooCommerce ${version}" \
             --verify-tag
