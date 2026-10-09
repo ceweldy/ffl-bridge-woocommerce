@@ -48,8 +48,70 @@ final class CoverageTest extends FFL_Bridge_TestCase {
 		$this->assertArrayHasKey( sprintf( '%03d', FFL_Bridge_Coverage::MAX_AREAS + 4 ), $log['areas'] );
 	}
 
+	public function test_each_event_expires_after_30_days_even_when_the_area_stays_active(): void {
+		$day = 86400;
+		FFL_Bridge_Coverage::record_gap( '48047', 100, false, 'OLD_REASON', self::NOW );
+		FFL_Bridge_Coverage::record_gap( '48047', 25, true, 'NEW_REASON', self::NOW + 20 * $day );
+
+		$both = FFL_Bridge_Coverage::get_log( self::NOW + 21 * $day )['areas']['480'];
+		$this->assertSame( 2, $both['count'] );
+		$this->assertSame( 100, $both['max_radius'] );
+
+		$later = FFL_Bridge_Coverage::get_log( self::NOW + 31 * $day )['areas']['480'];
+		$this->assertSame( 1, $later['count'] );
+		$this->assertSame( 1, $later['fallback'] );
+		$this->assertSame( 25, $later['max_radius'] );
+		$this->assertSame( self::NOW + 20 * $day, $later['first'] );
+		$this->assertSame( 'NEW_REASON', $later['reason'] );
+
+		FFL_Bridge_Coverage::record_gap( '48047', 50, false, '', self::NOW + 31 * $day );
+		$stored = $GLOBALS['ffl_bridge_test_options'][ FFL_Bridge_Coverage::OPTION ];
+		$this->assertCount( 2, $stored['areas']['a480'] );
+	}
+
+	public function test_late_day_events_are_not_expired_from_midnight(): void {
+		$day      = 86400;
+		$midnight = intdiv( self::NOW, $day ) * $day;
+		FFL_Bridge_Coverage::record_gap( '48047', 50, false, '', $midnight + 23 * 3600 );
+
+		// Thirty days after that midnight, the event is still under 30 days old.
+		$this->assertSame( 1, FFL_Bridge_Coverage::total( FFL_Bridge_Coverage::get_log( $midnight + FFL_Bridge_Coverage::WINDOW + 3600 ) ) );
+		$this->assertSame( 0, FFL_Bridge_Coverage::total( FFL_Bridge_Coverage::get_log( $midnight + 23 * 3600 + FFL_Bridge_Coverage::WINDOW + 1 ) ) );
+	}
+
+	public function test_events_never_outlive_the_window(): void {
+		FFL_Bridge_Coverage::record_gap( '48047', 100, false, '', self::NOW );
+
+		for ( $offset = 0; $offset <= 31; $offset++ ) {
+			$total = FFL_Bridge_Coverage::total( FFL_Bridge_Coverage::get_log( self::NOW + $offset * 86400 ) );
+			if ( $offset > 30 ) {
+				$this->assertSame( 0, $total, "Event still counted after {$offset} days." );
+			}
+		}
+	}
+
+	public function test_old_single_aggregate_logs_are_discarded(): void {
+		$GLOBALS['ffl_bridge_test_options'][ FFL_Bridge_Coverage::OPTION ] = array(
+			'areas' => array(
+				'480' => array(
+					'count' => 99,
+					'last'  => self::NOW,
+				),
+			),
+		);
+
+		$this->assertSame( 0, FFL_Bridge_Coverage::total( FFL_Bridge_Coverage::get_log( self::NOW ) ) );
+	}
+
 	public function test_malformed_stored_log_is_ignored(): void {
-		$GLOBALS['ffl_bridge_test_options'][ FFL_Bridge_Coverage::OPTION ] = array( 'areas' => array( 'abc' => array( 'count' => 3, 'last' => self::NOW ), '481' => 'bad' ) );
+		$GLOBALS['ffl_bridge_test_options'][ FFL_Bridge_Coverage::OPTION ] = array(
+			'version' => 2,
+			'areas'   => array(
+				'abc'  => array( 'd20000' => array( 'count' => 3, 'last' => self::NOW ) ),
+				'a481' => 'bad',
+				'a482' => array( 'not-a-day' => array( 'count' => 3, 'last' => self::NOW ) ),
+			),
+		);
 
 		$this->assertSame( array(), FFL_Bridge_Coverage::get_log( self::NOW )['areas'] );
 	}

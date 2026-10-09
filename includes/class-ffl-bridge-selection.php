@@ -49,9 +49,11 @@ final class FFL_Bridge_Selection {
 			'n'   => bin2hex( random_bytes( 12 ) ),
 		);
 
-		// Mark a fallback dealer so selection can apply the unconfirmed rules.
-		// The signature prevents a shopper from adding or removing this flag.
-		if ( FFL_Bridge_Network::NETWORK_UNCONFIRMED === ( $dealer['network'] ?? '' ) ) {
+		// Mark every dealer outside the verified network, including unknown
+		// ones from an API without the flag, so selection can apply the hybrid
+		// rules. The signature prevents a shopper from adding or removing it,
+		// and selection still ignores it unless hybrid mode is on.
+		if ( FFL_Bridge_Network::NETWORK_VERIFIED !== ( $dealer['network'] ?? '' ) ) {
 			$payload['fb'] = 1;
 		}
 

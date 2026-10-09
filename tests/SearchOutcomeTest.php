@@ -175,14 +175,20 @@ final class SearchOutcomeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( array( 'No Status Field' ), array_column( $resolved['dealers'], 'name' ) );
 	}
 
-	public function test_eligibility_derives_confirmed_transfer_status_from_detail(): void {
-		$dealer                      = $this->dealer();
-		$dealer['accepts_transfers'] = true;
+	public function test_eligibility_keeps_transfer_confirmation_separate_from_license(): void {
+		$eligibility                     = $this->eligibility( false );
+		$eligibility['acceptsTransfers'] = true;
 
-		$allowed = FFL_Bridge_API_Client::apply_eligibility( $dealer, $this->eligibility( false ), true );
+		$allowed = FFL_Bridge_API_Client::apply_eligibility( $this->dealer(), $eligibility, true );
 
 		$this->assertSame( 'confirmed', $allowed['transfer_status'] );
-		$this->assertFalse( $allowed['transfer_confirmed'] );
+		$this->assertTrue( $allowed['transfer_confirmed'] );
+		$this->assertFalse( $allowed['license_verified'] );
+		$this->assertFalse( $allowed['checkout_verified'] );
+
+		$none = FFL_Bridge_API_Client::apply_eligibility( $this->dealer(), $this->eligibility( false ), true );
+		$this->assertSame( 'unconfirmed', $none['transfer_status'] );
+		$this->assertFalse( $none['transfer_confirmed'] );
 	}
 
 	public function test_eligibility_accepts_verified_network_dealer(): void {
@@ -272,8 +278,8 @@ final class SearchOutcomeTest extends FFL_Bridge_TestCase {
 	public function test_fallback_notice_tells_shopper_to_contact_dealer(): void {
 		$notice = FFL_Bridge_Checkout::search_notice( 'fallback', '48047', 100, true, null, '' );
 
-		$this->assertStringContainsString( 'transfer acceptance is not confirmed', $notice );
-		$this->assertStringContainsString( 'Contact the dealer to confirm', $notice );
+		$this->assertStringContainsString( 'You can still choose one of the nearby licensed dealers below.', $notice );
+		$this->assertStringContainsString( 'contact the dealer to confirm they will accept the transfer', $notice );
 		$this->assertStringNotContainsString( 'Try a larger radius', $notice );
 	}
 
@@ -287,11 +293,52 @@ final class SearchOutcomeTest extends FFL_Bridge_TestCase {
 		$dealer            = $this->dealer();
 		$dealer['network'] = FFL_Bridge_Network::NETWORK_UNCONFIRMED;
 
+		$verified            = $this->dealer();
+		$verified['network'] = FFL_Bridge_Network::NETWORK_VERIFIED;
+
 		$fallback  = FFL_Bridge_Selection::verify( (string) FFL_Bridge_Selection::create( $dealer ) );
-		$confirmed = FFL_Bridge_Selection::verify( (string) FFL_Bridge_Selection::create( $this->dealer() ) );
+		$confirmed = FFL_Bridge_Selection::verify( (string) FFL_Bridge_Selection::create( $verified ) );
 
 		$this->assertSame( 1, $fallback['fb'] );
 		$this->assertArrayNotHasKey( 'fb', $confirmed );
+	}
+
+	public function test_unknown_dealers_from_an_older_api_carry_the_hybrid_flag(): void {
+		// An API without checkoutEligible or unconfirmedTier: the unfiltered
+		// fallback search returns dealers the plugin classifies as unknown.
+		$nearby = static fn (): array => array(
+			'dealers' => array(
+				array(
+					'id'      => '123e4567-e89b-12d3-a456-426614174009',
+					'license' => '1-23-456-78-9A-09999',
+					'name'    => 'Older API Arms',
+				),
+			),
+		);
+		$result = FFL_Bridge_Network::resolve( array( 'dealers' => array() ), $nearby, FFL_Bridge_Network::SCOPE_ALL, array(), true );
+		$dealer = $result['dealers'][0];
+
+		$this->assertSame( FFL_Bridge_Network::NETWORK_UNKNOWN, $dealer['network'] );
+		$this->assertTrue( $dealer['selectable'] );
+		$payload = FFL_Bridge_Selection::verify( (string) FFL_Bridge_Selection::create( $dealer ) );
+		$this->assertSame( 1, $payload['fb'] );
+	}
+
+	public function test_hybrid_revalidation_rejects_a_dealer_that_declined_transfers(): void {
+		$dealer                    = $this->dealer();
+		$dealer['transfer_status'] = 'declined';
+
+		$this->assertInstanceOf( WP_Error::class, FFL_Bridge_API_Client::apply_eligibility( $dealer, $this->eligibility( false ), true ) );
+
+		$canonical = array(
+			'is_active'         => true,
+			'checkout_verified' => false,
+			'accepts_transfers' => false,
+			'transfer_status'   => 'declined',
+		);
+		$this->assertFalse( FFL_Bridge_Checkout::dealer_still_acceptable( $canonical ) );
+		$canonical['transfer_status'] = 'unconfirmed';
+		$this->assertTrue( FFL_Bridge_Checkout::dealer_still_acceptable( $canonical ) );
 	}
 
 	/**

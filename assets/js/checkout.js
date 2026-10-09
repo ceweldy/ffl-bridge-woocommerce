@@ -67,12 +67,12 @@
 		if ( dealer.storePreferred ) {
 			badges.appendChild( element( 'span', 'ffl-bridge-badge is-preferred', message( config, 'preferred', 'Store preferred dealer' ) ) );
 		}
-		if ( dealer.network === 'unconfirmed' || dealer.transferConfirmed === false ) {
-			badges.appendChild( dealer.transferStatus === 'confirmed'
+		if ( dealer.network === 'unconfirmed' || dealer.followUp ) {
+			badges.appendChild( dealer.transferStatus === 'confirmed' || dealer.transferStatus === 'merchant_confirmed'
 				? element( 'span', 'ffl-bridge-badge is-unconfirmed', message( config, 'licenseBadge', 'License not verified' ) )
 				: element( 'span', 'ffl-bridge-badge is-unconfirmed', message( config, 'unconfirmed', 'Transfer not confirmed' ) ) );
 		} else if ( dealer.network === 'verified' ) {
-			badges.appendChild( element( 'span', 'ffl-bridge-badge is-verified', message( config, 'verifiedBadge', 'Verified checkout network' ) ) );
+			badges.appendChild( element( 'span', 'ffl-bridge-badge is-verified', message( config, 'verifiedBadge', 'Confirmed transfer dealer' ) ) );
 		} else if ( dealer.network === 'directory' ) {
 			badges.appendChild( element( 'span', 'ffl-bridge-badge is-directory', message( config, 'directoryOnly', 'Directory listing only' ) ) );
 		}
@@ -82,9 +82,9 @@
 	}
 
 	function unconfirmedNote( dealer, config ) {
-		return dealer.transferStatus === 'confirmed'
-			? message( config, 'licenseNote', 'This dealer has confirmed transfers, but its license copy is not verified yet. Contact the dealer before you order.' )
-			: message( config, 'contactDealer', 'Contact this dealer to confirm they will accept the transfer before you order.' );
+		return dealer.transferStatus === 'confirmed' || dealer.transferStatus === 'merchant_confirmed'
+			? message( config, 'licenseNote', 'This dealer has confirmed transfers with FFL Bridge, but its license copy is not verified yet.' )
+			: message( config, 'contactDealer', 'This dealer has not confirmed with FFL Bridge that it accepts transfers. You can still choose it.' );
 	}
 
 	function mount( root, suppliedConfig ) {
@@ -114,9 +114,9 @@
 				selectedBox.appendChild( element( 'h4', '', message( config, 'selectedTitle', 'Selected transfer dealer' ) ) );
 				appendBadges( selectedBox, selected, config );
 				appendDealerDetails( selectedBox, selected, false, config );
-				if ( selected.transferConfirmed === false ) {
+				if ( selected.followUp ) {
 					selectedBox.classList.add( 'is-unconfirmed' );
-					selectedBox.appendChild( element( 'p', 'ffl-bridge-unconfirmed-note', unconfirmedNote( selected, config ) ) );
+					selectedBox.appendChild( element( 'p', 'ffl-bridge-followup', message( config, 'followUp', 'Next step: contact your selected FFL dealer and confirm they will accept this transfer. Then ask them to send a copy of their current FFL to the store.' ) ) );
 				}
 				selectedBox.appendChild( element( 'p', 'ffl-bridge-confirm-notice', message( config, 'confirmNotice', 'Contact the dealer before the order ships.' ) ) );
 

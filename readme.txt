@@ -23,7 +23,9 @@ Features:
 * Clear labels for the verified checkout network and public directory listings, which cannot be selected
 * Optional store preferred dealer list, kept in WordPress
 * Clear shopper messaging and an admin coverage notice when no transfer-accepting dealer is found nearby
-* Optional fallback, off by default, offering nearby dealers labeled "Transfer not confirmed"
+* Hybrid dealer selection (default for new installs): confirmed dealers first, plus nearby ATF-listed dealers labeled "License not verified" or "Transfer not confirmed", so checkout is never empty
+* Shopper follow-up instructions on checkout, the thank-you page, and customer emails, asking the dealer to send the store a license copy
+* One-click "Mark transfer confirmed" on the order screen, with an optional private license file
 * Required or optional selection for all products or configured categories
 * Dealer details in order administration, order emails, confirmation pages, and customer order details
 * WooCommerce High-Performance Order Storage compatibility
@@ -41,7 +43,7 @@ This plugin records dealer metadata for the retailer's fulfillment workflow. It 
 
 Dealer search and verification depend on the hosted FFL Bridge service at `https://www.fflbridge.com/api/v1`. These features do not work when the service is unavailable.
 
-When a shopper searches, the plugin sends the shopper-entered ZIP code and radius, the site's public origin, the merchant API key, and standard server request metadata. When a shopper selects a dealer, the plugin sends the dealer UUID to retrieve the current record. The plugin does not intentionally send the shopper's name, email address, billing/shipping address, or payment information to FFL Bridge. Search results may be cached in WordPress for up to five minutes. When a search finds no dealer confirmed to accept transfers, the plugin keeps the first three digits of the ZIP code, the radius, and counts for up to 30 days to show store administrators where coverage is missing. The current selection is held in the WooCommerce session, and the selected dealer fields are stored by the merchant in the WooCommerce order.
+When a shopper searches, the plugin sends the shopper-entered ZIP code and radius, the site's public origin, the merchant API key, and standard server request metadata. When a shopper selects a dealer, the plugin sends the dealer UUID to retrieve the current record. When store staff mark a transfer as confirmed, the plugin sends the dealer UUID, license number, order number, an optional staff note, and an optional copy of the dealer license to FFL Bridge. The plugin does not intentionally send the shopper's name, email address, billing/shipping address, or payment information to FFL Bridge. Search results may be cached in WordPress for up to five minutes. When a search finds no dealer confirmed to accept transfers, the plugin keeps the first three digits of the ZIP code, the radius, and counts for up to 31 days (30 days per search, kept by day) to show store administrators where coverage is missing. The current selection is held in the WooCommerce session, and the selected dealer fields are stored by the merchant in the WooCommerce order.
 
 Use of the service is governed by the [FFL Bridge Terms of Service](https://www.fflbridge.com/terms) and [Privacy Policy](https://www.fflbridge.com/privacy).
 
@@ -76,7 +78,11 @@ Search covers the public FFL directory. Only dealers in the FFL Bridge verified 
 
 = What happens when no transfer-accepting dealer is nearby? =
 
-The shopper sees a message explaining that no dealer within the chosen radius is confirmed to accept transfers, and store administrators see a coverage notice. If you turn on the fallback setting, shoppers can instead choose a nearby listed dealer labeled "Transfer not confirmed". The order is marked the same way so staff confirm with the dealer before shipping.
+In hybrid mode (the default for new installs) shoppers can still choose a nearby ATF-listed dealer. Dealers in the verified checkout network are listed first. Others are labeled "License not verified" or "Transfer not confirmed", and after choosing one the shopper is asked to contact the dealer, confirm they will accept the transfer, and have them send a copy of their current FFL to the store's license email or fax. Checkout is not blocked. In "Confirmed dealers only" mode the shopper sees a message instead, and store administrators see a coverage notice either way.
+
+= How does the store confirm a transfer? =
+
+Open the order. The dealer panel shows the license number and whether the transfer is confirmed. Click "Mark transfer confirmed", optionally attaching the license copy (PDF, JPG, or PNG, up to 5 MB). The plugin records who confirmed it and when, adds an order note, stores the file privately, and reports the confirmation to FFL Bridge when the API supports it. The plugin never contacts dealers on its own.
 
 = Does selecting a dealer change the shipping destination? =
 
