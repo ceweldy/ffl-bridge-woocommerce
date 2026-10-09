@@ -4,9 +4,11 @@ All notable changes to FFL Bridge for WooCommerce are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-10-08
 
 ### Added
+
+- Automatic updates from FFL Bridge. The plugin reads a manifest at `https://fflbridge.com/api/plugins/woocommerce/update` (HTTPS only, cached for 12 hours, silent when unreachable), shows "Update available" and a "View details" modal, supports WordPress auto-updates without turning them on, and checks every downloaded package against the manifest sha256 before installing. Installs older than 1.2.0 need one manual update to 1.2.0 to get the checker.
 
 - Hybrid dealer selection, the default for new installs: verified network dealers first, then nearby ATF-listed dealers labeled "License not verified" or "Transfer not confirmed", all selectable. Dealers that declined transfers are never shown. A "Confirmed dealers only" mode remains. Existing installs keep their saved behavior and see a one-click offer to switch.
 - Shopper follow-up instructions after choosing a dealer that is not fully verified, on checkout, the thank-you page, My Account, and customer emails, asking the dealer to send the store a license copy. New "License copy email" (defaults to the admin email) and optional "License copy fax" settings, and a `ffl_bridge_followup_instructions` filter.
@@ -60,6 +62,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Initial proof-of-concept checkout selector and WooCommerce order metadata display.
 
-[Unreleased]: https://github.com/ceweldy/ffl-bridge-woocommerce/compare/v1.1.0...HEAD
+[1.2.0]: https://github.com/ceweldy/ffl-bridge-woocommerce/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ceweldy/ffl-bridge-woocommerce/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ceweldy/ffl-bridge-woocommerce/releases/tag/v1.0.0

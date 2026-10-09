@@ -3,7 +3,7 @@
  * Plugin Name: FFL Bridge for WooCommerce
  * Plugin URI: https://www.fflbridge.com/woocommerce-ffl-plugin
  * Description: Adds server-verified FFL dealer selection metadata to WooCommerce checkout.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: FFL Bridge
  * Author URI: https://www.fflbridge.com
  * License: GPL v2 or later
@@ -14,13 +14,14 @@
  * WC requires at least: 10.8
  * WC tested up to: 10.9
  * Text Domain: ffl-bridge-for-woocommerce
+ * Update URI: https://fflbridge.com/api/plugins/woocommerce/update
  *
  * @package FFL_Bridge_WooCommerce
  */
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FFL_BRIDGE_VERSION', '1.1.0' );
+define( 'FFL_BRIDGE_VERSION', '1.2.0' );
 define( 'FFL_BRIDGE_PLUGIN_FILE', __FILE__ );
 define( 'FFL_BRIDGE_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'FFL_BRIDGE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -87,6 +88,23 @@ function ffl_bridge_init(): void {
 	FFL_Bridge_Blocks_Integration::init();
 }
 add_action( 'plugins_loaded', 'ffl_bridge_init', 20 );
+
+/**
+ * Load the self-hosted updater when it is part of this build.
+ *
+ * It loads even without WooCommerce so a store can always update the
+ * plugin. The WordPress.org directory build leaves the file out.
+ *
+ * @return void
+ */
+function ffl_bridge_init_updater(): void {
+	$updater = FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-updater.php';
+	if ( is_readable( $updater ) ) {
+		require_once $updater;
+		FFL_Bridge_Updater::init();
+	}
+}
+add_action( 'plugins_loaded', 'ffl_bridge_init_updater', 5 );
 
 /**
  * Add default options without overwriting an existing installation.

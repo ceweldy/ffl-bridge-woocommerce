@@ -47,6 +47,29 @@ Alternatively, enter the key on **WooCommerce > FFL Bridge**. Never commit a rea
 
 Version 1.0.x sent the API key to the checkout browser. If a key was ever used with 1.0.x, committed to a repository, or included in a previously distributed build, revoke it in FFL Bridge and create a replacement before using 1.1.0. Upgrading prevents the new key from being exposed by the plugin, but cannot make an old exposed key safe.
 
+## Updates
+
+From 1.2.0 the plugin updates itself from FFL Bridge. Installs older than 1.2.0 need one manual update to 1.2.0; after that, new versions appear under **Dashboard > Updates** and on the Plugins screen, where "View details" shows the changelog. WordPress auto-updates stay off until a store turns them on for this plugin.
+
+The update checker reads `https://fflbridge.com/api/plugins/woocommerce/update` over HTTPS, caches the answer for 12 hours (one hour after a failure), and does nothing visible when the server is unreachable. Expected manifest:
+
+```json
+{
+  "version": "1.2.0",
+  "download_url": "https://fflbridge.com/downloads/ffl-bridge-for-woocommerce-1.2.0.zip",
+  "sha256": "64 lowercase hex characters",
+  "requires": "6.9",
+  "requires_php": "8.3",
+  "tested": "7.0",
+  "requires_plugins": ["woocommerce"],
+  "wc_requires": "10.8",
+  "changelog_html": "<h4>1.2.0</h4><ul><li>...</li></ul>",
+  "last_updated": "2026-10-08"
+}
+```
+
+`download_url` must be HTTPS on fflbridge.com or a subdomain. Before WordPress installs the package, the plugin downloads it and compares its sha256 with the manifest. A mismatch deletes the file and stops the update with an error. If the manifest cannot be loaded when an update starts, the update stops instead of installing an unchecked package, and a package supplied by another download filter is checked the same way. The plugin header sets `Update URI` to the manifest address so WordPress.org never offers a different package under the same slug.
+
 ## External service and privacy
 
 Dealer search and verification depend on the hosted FFL Bridge service at `https://www.fflbridge.com/api/v1`; the plugin cannot provide those functions when that service is unavailable.

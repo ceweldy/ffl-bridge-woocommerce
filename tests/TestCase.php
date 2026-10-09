@@ -23,6 +23,10 @@ abstract class FFL_Bridge_TestCase extends PHPUnitTestCase {
 		$GLOBALS['ffl_bridge_test_post_types']      = array();
 		$GLOBALS['ffl_bridge_test_http']            = array();
 		$GLOBALS['ffl_bridge_test_http_responses']  = array();
+		$GLOBALS['ffl_bridge_test_site_transients'] = array();
+		$GLOBALS['ffl_bridge_test_downloads']       = array();
+		$GLOBALS['ffl_bridge_test_hooks']           = array();
+		unset( $GLOBALS['ffl_bridge_test_download_file'] );
 		$_POST  = array();
 		$_FILES = array();
 
