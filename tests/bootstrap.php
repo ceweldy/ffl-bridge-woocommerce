@@ -168,6 +168,68 @@ function wp_send_json_error( mixed $data = null, int $status = 400 ): never {
 	throw new FFL_Bridge_Test_Json( false, is_array( $data ) ? $data : array(), $status );
 }
 
+/** Thrown by the wp_die and wp_safe_redirect doubles. */
+class FFL_Bridge_Test_Die extends Exception {
+	public function __construct( public int $status, string $message = '' ) {
+		parent::__construct( $message );
+	}
+}
+
+function wp_die( mixed $message = '', mixed $title = '', mixed $args = array() ): never {
+	$status = is_int( $title ) ? $title : ( is_array( $args ) && isset( $args['response'] ) ? (int) $args['response'] : 500 );
+	throw new FFL_Bridge_Test_Die( $status, is_string( $message ) ? $message : '' );
+}
+
+function check_admin_referer( string $action = '', string $query_arg = '_wpnonce' ): int {
+	$nonce = $_REQUEST[ $query_arg ] ?? ''; // phpcs:ignore
+	if ( 'nonce-' . $action !== $nonce ) {
+		wp_die( 'The link you followed has expired.', 403 );
+	}
+	return 1;
+}
+
+function wp_verify_nonce( mixed $nonce, string $action = '' ): int|false {
+	return 'nonce-' . $action === $nonce ? 1 : false;
+}
+
+function wp_safe_redirect( string $location, int $status = 302 ): never {
+	throw new FFL_Bridge_Test_Die( $status, $location );
+}
+
+function wp_get_referer(): string|false {
+	return false;
+}
+
+function get_current_screen(): ?object {
+	$id = $GLOBALS['ffl_bridge_test_screen'] ?? null;
+	return null === $id ? null : (object) array( 'id' => $id );
+}
+
+function admin_url( string $path = '' ): string {
+	return 'https://store.example.test/wp-admin/' . ltrim( $path, '/' );
+}
+
+function wp_nonce_url( string $url, string $action = '' ): string {
+	return $url . ( str_contains( $url, '?' ) ? '&' : '?' ) . '_wpnonce=nonce-' . $action;
+}
+
+function esc_url( string $url ): string {
+	return htmlspecialchars( $url, ENT_QUOTES );
+}
+
+function esc_attr( string $text ): string {
+	return htmlspecialchars( $text, ENT_QUOTES );
+}
+
+function get_user_meta( int $user_id, string $key = '', bool $single = false ): mixed {
+	return $GLOBALS['ffl_bridge_test_user_meta'][ $user_id ][ $key ] ?? '';
+}
+
+function update_user_meta( int $user_id, string $key, mixed $value ): bool {
+	$GLOBALS['ffl_bridge_test_user_meta'][ $user_id ][ $key ] = $value;
+	return true;
+}
+
 function current_user_can( string $capability, mixed ...$args ): bool {
 	return in_array( $capability, $GLOBALS['ffl_bridge_test_caps'], true );
 }

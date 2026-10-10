@@ -6,7 +6,7 @@ Tested up to: 7.1
 Requires PHP: 8.3
 WC requires at least: 10.8
 WC tested up to: 10.9
-Stable tag: 1.2.0
+Stable tag: 1.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -130,6 +130,12 @@ Uninstalling removes the plugin settings, including an API key saved in WordPres
 
 == Changelog ==
 
+= 1.2.1 =
+
+* Security: Every admin action and AJAX request checks both a nonce and the user's capability before reading request data. Settings saves now require manage_woocommerce, and removing the saved API key needs a valid settings nonce.
+* Admin notices appear only on the plugin's settings page and the WooCommerce order screens, and the coverage notice can be dismissed per user. The WooCommerce dependency notice appears only on the Plugins screen.
+* Added tests that requests without a nonce or capability are rejected.
+
 = 1.2.0 =
 
 * Hybrid dealer selection, the default for new installs: confirmed dealers first, plus nearby licensed dealers labeled "License not verified" or "Transfer not confirmed". Existing installs keep their setting and see an offer to switch.
@@ -154,6 +160,10 @@ Uninstalling removes the plugin settings, including an API key saved in WordPres
 * Initial proof-of-concept release.
 
 == Upgrade Notice ==
+
+= 1.2.1 =
+
+Security hardening for admin requests and quieter admin notices. Recommended for all stores.
 
 = 1.2.0 =
 

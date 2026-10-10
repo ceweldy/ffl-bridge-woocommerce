@@ -133,11 +133,13 @@ final class FFL_Bridge_Transfer_Confirmation {
 	 * @return void
 	 */
 	public static function ajax_confirm(): void {
-		$order_id = isset( $_POST['order_id'] ) ? absint( wp_unslash( $_POST['order_id'] ) ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is order-specific and checked next.
-
 		if ( ! current_user_can( self::capability() ) ) {
 			wp_send_json_error( array( 'message' => esc_html__( 'You are not allowed to confirm transfers.', 'ffl-bridge-for-woocommerce' ) ), 403 );
 		}
+
+		// The nonce action includes the order ID, so the ID is read first and
+		// the nonce is verified before anything else is used.
+		$order_id = isset( $_POST['order_id'] ) ? absint( wp_unslash( $_POST['order_id'] ) ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is order-specific and checked next.
 
 		if ( 0 === $order_id || ! check_ajax_referer( self::NONCE_PREFIX . $order_id, 'nonce', false ) ) {
 			wp_send_json_error( array( 'message' => esc_html__( 'The security token expired. Reload the order and try again.', 'ffl-bridge-for-woocommerce' ) ), 403 );
@@ -438,11 +440,11 @@ final class FFL_Bridge_Transfer_Confirmation {
 	 * @return void
 	 */
 	public static function download_license_file(): void {
-		$order_id = isset( $_GET['order_id'] ) ? absint( wp_unslash( $_GET['order_id'] ) ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- The nonce is order-specific and checked next.
 		if ( ! current_user_can( self::capability() ) ) {
 			wp_die( esc_html__( 'You are not allowed to view this file.', 'ffl-bridge-for-woocommerce' ), 403 );
 		}
 
+		$order_id = isset( $_GET['order_id'] ) ? absint( wp_unslash( $_GET['order_id'] ) ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- The nonce is order-specific and checked next.
 		check_admin_referer( self::FILE_NONCE . $order_id );
 
 		$order  = wc_get_order( $order_id );

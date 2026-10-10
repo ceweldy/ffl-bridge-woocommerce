@@ -28,15 +28,46 @@ final class FFL_Bridge_Settings {
 		add_action( 'wp_ajax_ffl_bridge_test_connection', array( __CLASS__, 'ajax_test_connection' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'render_hybrid_offer' ) );
 		add_action( 'admin_post_ffl_bridge_hybrid_offer', array( __CLASS__, 'handle_hybrid_offer' ) );
+		add_filter( 'option_page_capability_ffl_bridge_settings', array( __CLASS__, 'settings_capability' ) );
+	}
+
+	/**
+	 * The capability needed to view and save the plugin settings.
+	 *
+	 * WordPress options.php checks manage_options by default; the settings page and
+	 * every settings handler use manage_woocommerce instead.
+	 *
+	 * @return string
+	 */
+	public static function settings_capability(): string {
+		return 'manage_woocommerce';
+	}
+
+	/**
+	 * Determine whether the current admin screen belongs to this plugin.
+	 *
+	 * @param bool $include_orders Also count the WooCommerce order screens the plugin adds to.
+	 * @return bool
+	 */
+	public static function is_plugin_screen( bool $include_orders = false ): bool {
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		$id     = $screen ? (string) $screen->id : '';
+		if ( 'woocommerce_page_' . self::PAGE_SLUG === $id ) {
+			return true;
+		}
+
+		return $include_orders && in_array( $id, array( 'shop_order', 'edit-shop_order', 'woocommerce_page_wc-orders' ), true );
 	}
 
 	/**
 	 * Offer existing confirmed-only stores a one-click switch to hybrid.
 	 *
+	 * Shown only on the plugin's settings page, never site-wide.
+	 *
 	 * @return void
 	 */
 	public static function render_hybrid_offer(): void {
-		if ( ! current_user_can( 'manage_woocommerce' ) || ! FFL_Bridge_Network::hybrid_offer_pending() ) {
+		if ( ! current_user_can( 'manage_woocommerce' ) || ! self::is_plugin_screen() || ! FFL_Bridge_Network::hybrid_offer_pending() ) {
 			return;
 		}
 
@@ -65,6 +96,10 @@ final class FFL_Bridge_Settings {
 
 		check_admin_referer( 'ffl_bridge_hybrid_offer' );
 		$choice = isset( $_GET['choice'] ) ? sanitize_key( wp_unslash( $_GET['choice'] ) ) : '';
+		if ( ! in_array( $choice, array( 'switch', 'keep' ), true ) ) {
+			wp_die( esc_html__( 'Unknown choice.', 'ffl-bridge-for-woocommerce' ), 400 );
+		}
+
 		self::apply_hybrid_offer( $choice );
 		wp_safe_redirect( admin_url( 'admin.php?page=' . self::PAGE_SLUG ) );
 		exit;
@@ -195,8 +230,27 @@ final class FFL_Bridge_Settings {
 	}
 
 	/**
+	 * Determine whether a verified settings save asked to remove the saved key.
+	 *
+	 * The flag is honored only with a valid settings-page nonce.
+	 *
+	 * @return bool
+	 */
+	public static function remove_api_key_requested(): bool {
+		$nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
+		if ( '' === $nonce || ! wp_verify_nonce( $nonce, 'ffl_bridge_settings-options' ) ) {
+			return false;
+		}
+
+		return isset( $_POST['ffl_bridge_remove_api_key'] ) && '1' === sanitize_text_field( wp_unslash( $_POST['ffl_bridge_remove_api_key'] ) );
+	}
+
+	/**
+	 * Sanitize the API key setting.
+	 *
 	 * Keep a saved key unless the merchant supplies a valid replacement or
-	 * explicitly checks the remove box. A wp-config.php constant always wins.
+	 * explicitly checks the remove box. A wp-config.php constant always wins,
+	 * and only a user who can manage these settings may change the key.
 	 *
 	 * @param mixed $input Submitted value.
 	 * @return string
@@ -209,8 +263,11 @@ final class FFL_Bridge_Settings {
 			return $current;
 		}
 
-		$remove = isset( $_POST['ffl_bridge_remove_api_key'] ) && '1' === sanitize_text_field( wp_unslash( $_POST['ffl_bridge_remove_api_key'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- options.php verifies the settings nonce.
-		if ( $remove ) {
+		if ( ! current_user_can( self::settings_capability() ) ) {
+			return $current;
+		}
+
+		if ( self::remove_api_key_requested() ) {
 			return '';
 		}
 
