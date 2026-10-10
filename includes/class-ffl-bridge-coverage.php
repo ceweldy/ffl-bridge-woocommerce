@@ -213,7 +213,9 @@ final class FFL_Bridge_Coverage {
 	}
 
 	/**
-	 * Show the coverage notice on WooCommerce, plugin, and dashboard screens.
+	 * Show the coverage notice on the plugin's settings page and order screens.
+	 *
+	 * Each user can dismiss it; the dismissal is stored in that user's meta.
 	 *
 	 * @return void
 	 */
@@ -222,9 +224,8 @@ final class FFL_Bridge_Coverage {
 			return;
 		}
 
-		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
-		$id     = $screen ? (string) $screen->id : '';
-		if ( 'dashboard' !== $id && 'plugins' !== $id && ! str_contains( $id, 'woocommerce' ) && ! str_contains( $id, 'shop_order' ) ) {
+		// Only on the plugin's settings page and the order screens it adds to.
+		if ( ! FFL_Bridge_Settings::is_plugin_screen( true ) ) {
 			return;
 		}
 

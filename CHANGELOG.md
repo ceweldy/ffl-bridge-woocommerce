@@ -4,6 +4,22 @@ All notable changes to FFL Bridge for WooCommerce are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-10-10
+
+### Security
+
+- Settings saves through `options.php` require `manage_woocommerce` instead of the default `manage_options`.
+- Removing the saved API key requires a valid settings nonce and the `manage_woocommerce` capability.
+- The transfer confirmation and license file handlers check the capability before reading the order ID, and the hybrid offer handler rejects unknown choices.
+
+### Changed
+
+- The hybrid offer notice shows only on the plugin settings page. The coverage notice shows only on the settings page and WooCommerce order screens, and stays dismissible per user. The WooCommerce dependency notice shows only on the Plugins screen.
+
+### Added
+
+- Tests that requests without a nonce or capability are rejected and that notices stay on the plugin's screens.
+
 ## [1.2.0] - 2026-10-08
 
 ### Added
@@ -62,6 +78,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Initial proof-of-concept checkout selector and WooCommerce order metadata display.
 
+[1.2.1]: https://github.com/ceweldy/ffl-bridge-woocommerce/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ceweldy/ffl-bridge-woocommerce/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ceweldy/ffl-bridge-woocommerce/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ceweldy/ffl-bridge-woocommerce/releases/tag/v1.0.0

@@ -27,8 +27,12 @@ abstract class FFL_Bridge_TestCase extends PHPUnitTestCase {
 		$GLOBALS['ffl_bridge_test_downloads']       = array();
 		$GLOBALS['ffl_bridge_test_hooks']           = array();
 		unset( $GLOBALS['ffl_bridge_test_download_file'] );
-		$_POST  = array();
-		$_FILES = array();
+		$GLOBALS['ffl_bridge_test_user_meta']       = array();
+		unset( $GLOBALS['ffl_bridge_test_screen'] );
+		$_POST    = array();
+		$_GET     = array();
+		$_REQUEST = array();
+		$_FILES   = array();
 
 		$woocommerce          = new FFL_Bridge_Test_WooCommerce();
 		$woocommerce->cart    = new FFL_Bridge_Test_Cart( array( array( 'product_id' => 100 ) ) );

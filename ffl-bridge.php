@@ -3,7 +3,7 @@
  * Plugin Name: FFL Bridge for WooCommerce
  * Plugin URI: https://www.fflbridge.com/woocommerce-ffl-plugin
  * Description: Adds server-verified FFL dealer selection metadata to WooCommerce checkout.
- * Version: 1.2.0
+ * Version: 1.2.1
  * Author: FFL Bridge
  * Author URI: https://www.fflbridge.com
  * License: GPL v2 or later
@@ -21,7 +21,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FFL_BRIDGE_VERSION', '1.2.0' );
+define( 'FFL_BRIDGE_VERSION', '1.2.1' );
 define( 'FFL_BRIDGE_PLUGIN_FILE', __FILE__ );
 define( 'FFL_BRIDGE_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'FFL_BRIDGE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -45,10 +45,17 @@ add_action( 'before_woocommerce_init', 'ffl_bridge_declare_compatibility' );
 /**
  * Display a dependency notice when WooCommerce is unavailable.
  *
+ * Shown only on the Plugins screen, where the dependency can be fixed.
+ *
  * @return void
  */
 function ffl_bridge_woocommerce_notice(): void {
 	if ( ! current_user_can( 'activate_plugins' ) ) {
+		return;
+	}
+
+	$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+	if ( ! $screen || 'plugins' !== $screen->id ) {
 		return;
 	}
 
