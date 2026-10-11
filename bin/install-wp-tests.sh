@@ -56,7 +56,6 @@ define( 'WP_DEBUG', true );
 define( 'WP_DEBUG_DISPLAY', false );
 define( 'WP_DEBUG_LOG', true );
 define( 'DISABLE_WP_CRON', true );
-define( 'WP_HTTP_BLOCK_EXTERNAL', true );
 PHP
 
 wp db drop --yes >/dev/null 2>&1 || true
@@ -81,6 +80,9 @@ wp plugin activate woocommerce
 
 ln -sfn "${ROOT_DIR}" "${WP_CORE_DIR}/wp-content/plugins/${SLUG}"
 wp plugin activate "${SLUG}"
+
+# Downloads are done. Tests must never reach a real external service.
+wp config set WP_HTTP_BLOCK_EXTERNAL true --raw
 
 printf 'WordPress %s, WooCommerce %s, PHP %s\n' \
 	"$(wp core version)" \
