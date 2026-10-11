@@ -35,3 +35,5 @@ SECURITY.md
 *.sqlite*
 .DS_Store
 ._*
+Jenkinsfile
+ci/***
