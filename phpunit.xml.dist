@@ -9,6 +9,7 @@
     <testsuites>
         <testsuite name="FFL Bridge unit tests">
             <directory suffix="Test.php">tests</directory>
+            <exclude>tests/integration</exclude>
         </testsuite>
     </testsuites>
 </phpunit>

@@ -22,7 +22,18 @@ bin/build-release.sh
 
 The release build packages only Git-tracked files and applies `.distignore`. Inspect the resulting ZIP under `dist/` before proposing a release-related change.
 
-The unit suite covers API response normalization, signed selection handles, cart/category decisions, and order-metadata compatibility. It does not boot a complete WordPress and WooCommerce checkout. Changes to checkout, order storage, or external-service behavior should therefore include a clear manual test record covering both classic checkout and the WooCommerce Checkout Block.
+The unit suite covers API response normalization, signed selection handles, cart/category decisions, and order-metadata compatibility with WordPress test doubles.
+
+The integration suite runs against a real WordPress and WooCommerce install. It needs WP-CLI and a MySQL or MariaDB server (see `bin/install-wp-tests.sh` for the database settings):
+
+```bash
+bin/install-wp-tests.sh 6.9 10.8.0   # or: bin/install-wp-tests.sh latest latest
+composer test:integration
+```
+
+CI runs the unit suite on PHP 8.3 to 8.5, the integration suite on PHP 8.3 and 8.4 with WordPress 6.9 plus WooCommerce 10.8 and with the latest WordPress and WooCommerce, PHPCS, the build test, and Plugin Check on the WordPress.org build.
+
+Neither suite runs a complete browser checkout. Changes to checkout, order storage, or external-service behavior should therefore include a clear manual test record covering both classic checkout and the WooCommerce Checkout Block.
 
 ## Pull requests
 
