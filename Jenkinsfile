@@ -68,16 +68,38 @@ def runLane = { String phase, String phpVersion, String agentLabel, boolean rece
                 // Also records checkout failures and Jenkins timeout/abort. Agent-loss remains
                 // visible in Jenkins result even when a workspace cannot be archived.
                 try {
-                    writeFile file: "receipts/jenkins-${phase}-${phpVersion}.json", text: groovy.json.JsonOutput.toJson([
-                        schema: 1, shadow: true, authority: 'github-actions', repository: 'ceweldy/ffl-bridge-woocommerce',
-                        source_sha: params.SOURCE_SHA, tooling_sha: toolingSha, workflow: workflow,
-                        event: event, ref: ref, stage: phase, php_lane: phpVersion, status: result,
-                        build_number: env.BUILD_NUMBER, build_url: env.BUILD_URL
-                    ]) + '\n'
-                    archiveArtifacts artifacts: 'receipts/*.json,receipts/*.txt,source/dist/*.zip,source/dist/*.sha256',
-                        allowEmptyArchive: false, fingerprint: true
+                    timeout(time: 2, unit: 'MINUTES') {
+                        // Inline guard is held by trusted pipeline code, not reloaded after the build.
+                        sh '''/usr/bin/python3 - <<'PY'
+# ffl archive guard begin
+import pathlib
+import stat
+
+for directory, patterns in (('receipts', ('*.json', '*.txt')), ('source/dist', ('*.zip', '*.sha256'))):
+    root = pathlib.Path(directory)
+    if not root.exists() and not root.is_symlink():
+        continue
+    for parent in (root, *root.parents):
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode):
+            raise SystemExit('Archive directory must be a regular non-symlink directory: ' + directory)
+    for pattern in patterns:
+        for path in root.glob(pattern):
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise SystemExit('Archive accepts only regular non-symlink files: ' + path.name)
+# ffl archive guard end
+PY'''
+                        writeFile file: "receipts/jenkins-${phase}-${phpVersion}.json", text: groovy.json.JsonOutput.toJson([
+                            schema: 1, shadow: true, authority: 'github-actions', repository: 'ceweldy/ffl-bridge-woocommerce',
+                            source_sha: params.SOURCE_SHA, tooling_sha: toolingSha, workflow: workflow,
+                            event: event, ref: ref, stage: phase, php_lane: phpVersion, status: result,
+                            build_number: env.BUILD_NUMBER, build_url: env.BUILD_URL
+                        ]) + '\n'
+                        archiveArtifacts artifacts: 'receipts/*.json,receipts/*.txt,source/dist/*.zip,source/dist/*.sha256',
+                            allowEmptyArchive: false, fingerprint: true
+                    }
                 } finally {
-                    deleteDir()
+                    timeout(time: 1, unit: 'MINUTES') { deleteDir() }
                 }
             }
         }

@@ -2,11 +2,13 @@
 """Credential-free shadow runner. Publication is deliberately not implemented."""
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -15,21 +17,100 @@ import zipfile
 
 PROFILE = json.loads(Path(__file__).with_name('profile.json').read_text())
 SLUG = 'ffl-bridge-for-woocommerce'
+GIT_BIN = '/usr/bin/git'  # Read-only system binary; never resolve source-controlled PATH entries.
 
 
 def command(args, cwd, capture=False, timeout=None):
-    result = subprocess.run(args, cwd=cwd, text=True, check=True,
+    env = None
+    if args[0] == 'git':
+        args = [GIT_BIN, '--no-replace-objects', *args[1:]]
+        env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+        env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
+    result = subprocess.run(args, cwd=cwd, env=env, text=True, check=True,
                             stdout=subprocess.PIPE if capture else None, timeout=timeout)
     return result.stdout.strip() if capture else ''
 
 
-def context(args):
+
+def regular_bytes(path, expected_size=None):
+    # Reject parent links and special files before opening; NONBLOCK also prevents
+    # a replaced FIFO from hanging between lstat and open. Host isolation is separate.
+    for parent in path.parents:
+        if parent.is_symlink():
+            raise ValueError(f'linked parent directory is forbidden: {path.name}')
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f'only regular non-symlink files are accepted: {path.name}')
+        if expected_size is not None and info.st_size != expected_size:
+            raise ValueError(f'tracked file size changed: {path.name}')
+        data = stream.read(info.st_size + 1)
+        if len(data) != info.st_size:
+            raise ValueError(f'file changed while reading: {path.name}')
+        return data, info.st_mode
+
+
+def source_manifest(args):
+    if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
+        raise ValueError('SOURCE_SHA must be a full lowercase 40-character commit SHA')
+    # Capture original commit object IDs and modes BEFORE any source command runs.
+    # The same process-held manifest is used after the stage; never rebuild it then.
+    tree = command(['git', 'ls-tree', '-r', '-l', '--full-tree', '-z', args.sha], args.source, True)
+    manifest = {}
+    for entry in tree.split('\0'):
+        if not entry:
+            continue
+        metadata, name = entry.split('\t', 1)
+        mode, kind, oid, size = metadata.split()
+        if kind != 'blob' or mode not in ('100644', '100755'):
+            raise ValueError(f'unsupported tracked file type: {name}')
+        manifest[name] = (mode, oid, int(size))
+    return manifest
+
+
+def verify_source(args, manifest):
+    index = {}
+    for entry in command(['git', 'ls-files', '--stage', '-z'], args.source, True).split('\0'):
+        if not entry:
+            continue
+        metadata, name = entry.split('\t', 1)
+        mode, oid, stage = metadata.split()
+        if stage != '0':
+            raise ValueError('unmerged source index is forbidden')
+        index[name] = (mode, oid)
+    expected_index = {name: (mode, oid) for name, (mode, oid, _) in manifest.items()}
+    if index != expected_index:
+        raise ValueError('tracked index paths/blobs/modes differ from original source commit')
+    for name, (mode, oid, size) in manifest.items():
+        data, actual_mode = regular_bytes(args.source / name, size)
+        normalized_mode = '100755' if actual_mode & 0o111 else '100644'
+        blob = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+        if blob != oid or normalized_mode != mode:
+            raise ValueError(f'tracked bytes or executable mode changed: {name}')
+
+
+def write_receipt(path, text):
+    if path.parent.is_symlink() or not path.parent.is_dir():
+        raise ValueError('receipt directory must be a regular directory')
+    # Atomic replacement never follows a target symlink or opens a target FIFO.
+    fd, temporary = tempfile.mkstemp(prefix='.receipt-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(text)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def context(args, manifest):
     if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
         raise ValueError('SOURCE_SHA must be a full lowercase 40-character commit SHA')
     if command(['git', 'rev-parse', 'HEAD'], args.source, True) != args.sha:
         raise ValueError('checkout HEAD does not equal SOURCE_SHA')
-    # Ignore generated/untracked files, but never build modified tracked source.
-    command(['git', 'diff', '--quiet', 'HEAD', '--'], args.source)
+    # Git status/index flags are not integrity evidence. Check actual bytes/modes.
+    verify_source(args, manifest)
     pr = args.event == 'pull_request' and re.fullmatch(r'refs/pull/[1-9][0-9]*/merge', args.ref)
     tag = args.event == 'push' and re.fullmatch(r'refs/tags/v[0-9A-Za-z._-]+', args.ref)
     if args.workflow == 'ci':
@@ -86,13 +167,14 @@ def verify_assets(source, workflow):
     manifest = []
     for name in sorted(expected):
         p = source / 'dist' / name
-        digest = hashlib.sha256(p.read_bytes()).hexdigest()
-        manifest.append({'name': name, 'bytes': p.stat().st_size, 'sha256': digest})
+        data, _ = regular_bytes(p)
+        digest = hashlib.sha256(data).hexdigest()
+        manifest.append({'name': name, 'bytes': len(data), 'sha256': digest})
         if name.endswith('.zip'):
-            check = p.with_name(name + '.sha256').read_text().strip()
+            check = regular_bytes(p.with_name(name + '.sha256'))[0].decode().strip()
             if check != f'{digest}  {name}':
                 raise ValueError(f'checksum mismatch: {name}')
-            with zipfile.ZipFile(p) as z:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
                 bad = z.testzip()
                 if bad or any(re.search(forbidden, item) or not item.startswith(SLUG + '/') or '..' in Path(item).parts for item in z.namelist()):
                     raise ValueError(f'corrupt or development-only release path: {name}')
@@ -105,7 +187,7 @@ def verify_assets(source, workflow):
 
 def transferred_assets(args):
     manifest = verify_assets(args.source, args.workflow)
-    previous = json.loads((args.output / 'package.json').read_text())
+    previous = json.loads(regular_bytes(args.output / 'package.json')[0])
     expected = {'repository': PROFILE['repository'], 'source_sha': args.sha,
                 'workflow': args.workflow, 'event': args.event, 'ref': args.ref,
                 'stage': 'package', 'status': 'success', 'artifacts': manifest}
@@ -218,7 +300,10 @@ def main():
         'build_number': os.environ.get('BUILD_NUMBER', 'local')}
     rc = 1
     try:
-        context(args)
+        manifest = source_manifest(args)
+        receipt['source_manifest_sha256'] = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+        receipt['source_integrity'] = 'original_commit_blob_bytes_and_modes'
+        context(args, manifest)
         if args.stage == 'quality':
             quality(args, receipt)
         elif args.stage == 'package':
@@ -242,7 +327,7 @@ def main():
                 'missing_svn_credentials_semantics': 'skip_with_notice',
                 'self_hosted_manifest': 'separate human publication; unchanged'}
         # Build/dependency scripts can mutate source: verify integrity again before success.
-        context(args)
+        context(args, manifest)
         receipt['status'] = 'success'
         rc = 0
     except (ValueError, OSError, subprocess.SubprocessError, KeyError, IndexError, json.JSONDecodeError, zipfile.BadZipFile) as e:
@@ -251,7 +336,7 @@ def main():
     finally:
         receipt['finished_at_epoch'] = int(time.time())
         lane = '-' + args.php if args.stage == 'quality' else ''
-        (args.output / f'{args.stage}{lane}.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+        write_receipt(args.output / f'{args.stage}{lane}.json', json.dumps(receipt, indent=2, sort_keys=True) + '\n')
     return rc
 
 

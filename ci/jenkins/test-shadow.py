@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -54,6 +55,27 @@ def main():
         git(mutating_source, '-c', 'user.name=Shadow Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Mutating build fixture')
         mutating_sha = git(mutating_source, 'rev-parse', 'HEAD')
         git(mutating_source, 'tag', '-f', 'v' + args.version)
+        masked_sources = []
+        for flag in ('assume-unchanged', 'skip-worktree'):
+            masked = Path(d) / flag
+            subprocess.run(['git', 'clone', '--quiet', '--no-local', str(source), str(masked)], check=True)
+            with (masked / 'bin/build-release.sh').open('a') as build:
+                build.write('\ngit -C "${ROOT_DIR}" update-index --' + flag + ' readme.txt\nprintf "\\n" >> "${ROOT_DIR}/readme.txt"\n')
+            git(masked, 'add', 'bin/build-release.sh')
+            git(masked, '-c', 'user.name=Shadow Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Masked mutation fixture')
+            masked_sha = git(masked, 'rev-parse', 'HEAD')
+            git(masked, 'tag', '-f', 'v' + args.version)
+            masked_sources.append((flag, masked, masked_sha))
+        guard = Path(d) / 'archive-guard.py'
+        # Capture the trusted inline guard before the source-blind validation pass.
+        inline = (root / 'Jenkinsfile').read_text().split('# ffl archive guard begin\n', 1)[1].split('# ffl archive guard end', 1)[0]
+        guard.write_text(inline)
+        archive_fixture = Path(d) / 'archive-fixture'
+        (archive_fixture / 'receipts').mkdir(parents=True)
+        (archive_fixture / 'source/dist').mkdir(parents=True)
+        (archive_fixture / 'receipts/regular.json').write_text('{}')
+        (archive_fixture / 'source/dist/regular.zip').write_bytes(b'regular file fixture')
+        original_readme = (source / 'readme.txt').read_bytes()
         output = Path(d) / 'receipts'
         failures = []
         probes = []
@@ -62,7 +84,7 @@ def main():
             cmd = [sys.executable, str(runner), '--source', str(checkout), '--sha', requested,
                    '--workflow', workflow, '--event', event, '--ref', ref,
                    '--stage', stage, '--output', str(output)]
-            r = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            r = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
             lane = '-8.3' if stage == 'quality' else ''
             receipt = json.loads((output / (stage + lane + '.json')).read_text())
             success = r.returncode == 0
@@ -77,16 +99,48 @@ def main():
         run('exact SHA context', True)
         run('short SHA rejected', False, requested=sha[:7])
         run('wrong event/ref rejected', False, ref='refs/heads/feature')
+        extra_tracked = source / 'extra-tracked.txt'
+        extra_tracked.write_text('index-only additional fixture')
+        git(source, 'add', 'extra-tracked.txt')
+        run('additional tracked index path rejected', False)
+        git(source, 'reset', '--quiet', 'HEAD', '--', 'extra-tracked.txt')
+        extra_tracked.unlink()
         run('tag/version mismatch rejected', False, workflow='release', ref='refs/tags/v0.0.0')
         (source / 'readme.txt').write_text('modified fixture\n')
         run('modified tracked source rejected', False)
         git(source, 'checkout', '--', 'readme.txt')
+        for flag in ('assume-unchanged', 'skip-worktree'):
+            git(source, 'update-index', '--' + flag, 'readme.txt')
+            (source / 'readme.txt').write_bytes(b'X' + original_readme[1:])
+            assert subprocess.run(['git', '-C', str(source), 'diff', '--quiet', 'HEAD', '--']).returncode == 0
+            run('pre-stage ' + flag + ' mask rejected', False)
+            git(source, 'update-index', '--no-' + flag, 'readme.txt')
+            git(source, 'checkout', '--', 'readme.txt')
+        git(source, 'config', 'core.filemode', 'false')
+        (source / 'readme.txt').chmod(0o755)
+        assert subprocess.run(['git', '-C', str(source), 'diff', '--quiet', 'HEAD', '--']).returncode == 0
+        run('core.filemode masked executable change rejected', False)
+        (source / 'readme.txt').chmod(0o644)
+        git(source, 'config', 'core.filemode', 'true')
+        (source / 'readme.txt').unlink()
+        os.mkfifo(source / 'readme.txt')
+        run('tracked FIFO rejected without blocking', False)
+        (source / 'readme.txt').unlink()
+        git(source, 'checkout', '--', 'readme.txt')
+        output.mkdir(exist_ok=True)
+        (output / 'context.json').unlink()
+        os.mkfifo(output / 'context.json')
+        run('receipt target FIFO atomically replaced', True)
         git(source, 'update-ref', 'refs/remotes/origin/main', other_sha)
         run('moved event ref rejected', False)
         git(source, 'update-ref', 'refs/remotes/origin/main', sha)
         run('PR merge exact ref', True, event='pull_request', ref='refs/pull/7/merge')
         release_ref = 'refs/tags/v' + args.version
         run('post-stage source mutation rejected', False, stage='package', workflow='release', ref=release_ref, requested=mutating_sha, checkout=mutating_source)
+        for flag, masked, masked_sha in masked_sources:
+            mutation = run('post-stage ' + flag + ' mask rejected', False, stage='package', workflow='release', ref=release_ref, requested=masked_sha, checkout=masked)
+            assert mutation.get('artifacts'), 'failure must occur after real artifact creation'
+            assert subprocess.run(['git', '-C', str(masked), 'diff', '--quiet', 'HEAD', '--']).returncode == 0
         receipt = run('real release package', True, stage='package', workflow='release', ref=release_ref)
         names = {a['name'] for a in receipt['artifacts']}
         expected_count = 4 if args.public else 2
@@ -109,6 +163,14 @@ def main():
         original = archive.read_bytes()
         archive.write_bytes(original + b'corruption')
         run('tampered byte checksum rejected', False, stage='verify', workflow='release', ref=release_ref)
+        archive.write_bytes(original)
+        archive.unlink()
+        archive.symlink_to(archive.with_name(archive.name + '.sha256'))
+        run('artifact symlink rejected', False, stage='verify', workflow='release', ref=release_ref)
+        archive.unlink()
+        os.mkfifo(archive)
+        run('artifact FIFO rejected without blocking', False, stage='verify', workflow='release', ref=release_ref)
+        archive.unlink()
         archive.write_bytes(original)
         extra = source / 'dist/unexpected.zip'
         extra.write_bytes(original)
@@ -149,6 +211,29 @@ def main():
         shutil.rmtree(source / 'dist')
         second = run('same SHA deterministic CI package', True, stage='package')
         assert first['artifacts'] == second['artifacts']
+        def archive_probe(label, expected):
+            r = subprocess.run([sys.executable, str(guard)], cwd=archive_fixture, text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=5)
+            passed = (r.returncode == 0) == expected
+            probes.append({'probe': label, 'status': 'pass' if passed else 'fail', 'exit_code': r.returncode})
+            if not passed:
+                failures.append(label + ': ' + r.stdout)
+        archive_probe('final archive regular files accepted', True)
+        special = archive_fixture / 'receipts/special.json'
+        special.symlink_to(archive_fixture / 'source/dist/regular.zip')
+        archive_probe('final archive receipt symlink rejected', False)
+        special.unlink()
+        os.mkfifo(special)
+        archive_probe('final archive receipt FIFO rejected without blocking', False)
+        special.unlink()
+        special = archive_fixture / 'source/dist/special.zip'
+        os.mkfifo(special)
+        archive_probe('final archive ZIP FIFO rejected without blocking', False)
+        special.unlink()
+        original_dist = archive_fixture / 'source/renamed-dist'
+        (archive_fixture / 'source/dist').rename(original_dist)
+        (archive_fixture / 'source/dist').symlink_to(original_dist, target_is_directory=True)
+        archive_probe('final archive linked directory rejected', False)
         print(json.dumps({'repository': expected_repo, 'fixture_sha': sha, 'probes': probes,
                           'runtime_clauses': {'php_matrix': 'not_exercised_by_artifact_probes',
                            'plugin_check': 'not_exercised_by_artifact_probes' if args.public else 'out_of_scope',
