@@ -5,7 +5,7 @@ def inDocker(String image, String script) {
     sh """
         set -eu
         tar -cf - . | docker run --rm -i --memory 6g --cpus 4 \\
-          -e CI=true -e HOME=/tmp/home ${image} \\
+          -e CI=true -e HOME=/tmp/home -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0="*" ${image} \\
           sh -c 'mkdir -p /src /tmp/home && cd /src && tar -xf - && git config --global --add safe.directory /src 2>/dev/null || true; sh .ci-step.sh'
     """
 }
@@ -22,7 +22,7 @@ find assets/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 bash -n bin/build-release.sh'''
 
 def pkg = setup + '''
-apt-get install -y -qq bash >/dev/null
+apt-get install -y -qq bash python3 rsync >/dev/null
 bash tests/build-release-test.sh
 bash bin/build-release.sh
 artifact="$(find dist -maxdepth 1 -type f -name 'ffl-bridge-for-woocommerce-*.zip' -print -quit)"
