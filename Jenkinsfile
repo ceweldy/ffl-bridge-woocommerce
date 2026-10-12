@@ -33,11 +33,25 @@ if unzip -Z1 "${artifact}" | grep -E '(^|/)(\\.distignore|\\.git|\\.github|bin|t
   exit 1
 fi'''
 
+// Posts a "jenkins" commit status to GitHub (github-ceweldy-ci token, commit statuses: write).
+def githubStatus(String state, String description) {
+    def repo = (env.GIT_URL ?: '').replaceAll(/^https:\/\/github\.com\//, '').replaceAll(/\.git$/, '')
+    if (!repo || !env.GIT_COMMIT) { return }
+    withCredentials([usernamePassword(credentialsId: 'github-ceweldy-ci', usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
+        withEnv(["GH_REPO=${repo}", "GH_STATE=${state}", "GH_DESC=${description}"]) {
+            sh '''curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GH_REPO/statuses/$GIT_COMMIT" \
+              -d "{\\"state\\":\\"$GH_STATE\\",\\"context\\":\\"jenkins\\",\\"description\\":\\"$GH_DESC\\",\\"target_url\\":\\"$BUILD_URL\\"}" || true'''
+        }
+    }
+}
+
 // Mirrors .github/workflows/ci.yml. release.yml and wporg.yml (tag/deploy) stay on Actions.
 pipeline {
     agent { label 'linux-docker' }
     options { timeout(time: 30, unit: 'MINUTES'); timestamps(); disableConcurrentBuilds(); buildDiscarder(logRotator(numToKeepStr: '20')) }
     stages {
+        stage('Report pending') { steps { script { githubStatus('pending', 'Jenkins CI running') } } }
         stage('PHP quality') {
             parallel {
                 stage('PHP 8.3') { steps { script { inDocker('php:8.3-cli', quality) } } }
@@ -47,5 +61,9 @@ pipeline {
         }
         stage('Reproducible release package') { steps { script { inDocker('php:8.3-cli', pkg) } } }
     }
-    post { always { deleteDir() } }
+    post {
+        success { script { githubStatus('success', 'Jenkins CI passed') } }
+        unsuccessful { script { githubStatus('failure', 'Jenkins CI failed') } }
+        always { deleteDir() }
+    }
 }
