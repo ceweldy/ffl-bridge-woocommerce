@@ -66,9 +66,7 @@ jobs:
           fi
           printf 'Directory package: %s\n' "$(cat "${artifact}.sha256")" >> "${GITHUB_STEP_SUMMARY}"
 
-      # Pull requests and pushes to main run Plugin Check in ci.yml.
       - name: Run Plugin Check
-        if: github.event_name == 'push'
         uses: WordPress/plugin-check-action@10857da14b6c2246d15402b3e69f777edcf8c12e # v1.1.9
         with:
           build-dir: dist/wporg-build/ffl-bridge-for-woocommerce
