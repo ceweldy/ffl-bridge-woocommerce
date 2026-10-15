@@ -25,13 +25,13 @@ The plugin is a dealer-selection and metadata tool. It does **not** change the s
 
 ## Install
 
-1. Download the ZIP from fflbridge.com: [ffl-bridge-for-woocommerce-1.2.1-wporg.zip](https://www.fflbridge.com/downloads/ffl-bridge-for-woocommerce-1.2.1-wporg.zip) (also linked, with its size and SHA-256, on [the WooCommerce plugin page](https://www.fflbridge.com/woocommerce-ffl-plugin)). Do not upload a GitHub source-code archive.
+1. Download the current release from fflbridge.com: [ffl-bridge-woocommerce.zip](https://www.fflbridge.com/downloads/ffl-bridge-woocommerce.zip). This build includes the update checker described under [Updates](#updates). Do not upload a GitHub source-code archive.
 2. In WordPress administration, open **Plugins > Add Plugin > Upload Plugin**.
 3. Upload the ZIP file, install it, and activate it.
 4. Open **WooCommerce > FFL Bridge** and configure the connection and checkout behavior.
 5. Test both dealer search and order placement in a staging environment before enabling the plugin on a production checkout.
 
-The download has a matching `.sha256` file (append `.sha256` to the ZIP URL) that can be used to verify it.
+Each release is also published under its versioned name with a matching `.sha256` file, for example [ffl-bridge-for-woocommerce-1.2.1.zip.sha256](https://www.fflbridge.com/downloads/ffl-bridge-for-woocommerce-1.2.1.zip.sha256), which can be used to verify the download.
 
 ## Configure the credential
 
