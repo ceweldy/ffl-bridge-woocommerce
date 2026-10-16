@@ -13,9 +13,12 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PLUGIN_SLUG: ffl-bridge-for-woocommerce
+
 jobs:
   quality:
-    name: PHP ${{ matrix.php }} quality checks
+    name: PHP ${{ matrix.php }} lint, PHPCS, and unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -46,17 +49,108 @@ jobs:
       - name: Audit Composer dependencies
         run: composer audit --locked --no-interaction
 
-      - name: Run lint, coding standards, and PHPUnit
-        run: composer check
+      - name: Lint PHP syntax
+        run: composer lint
+
+      - name: PHPCS (WordPress Coding Standards)
+        run: vendor/bin/phpcs --standard=phpcs.xml.dist --report-full --report-summary
+
+      - name: PHPUnit unit tests
+        run: composer test
 
       - name: Check JavaScript syntax
-        run: find assets/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+        run: find assets/js .github/scripts -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
 
-      - name: Validate release script syntax
-        run: bash -n bin/build-release.sh
+      - name: Validate shell script syntax
+        run: |
+          bash -n bin/build-release.sh
+          bash -n bin/install-wp-tests.sh
+          bash -n tests/build-release-test.sh
+
+  integration:
+    name: PHPUnit (PHP ${{ matrix.php }}, WordPress ${{ matrix.wp }}, WooCommerce ${{ matrix.wc }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - '8.3'
+          - '8.4'
+        wp:
+          - '6.9'
+          - latest
+        include:
+          # The plugin's minimums: WordPress 6.9 with WooCommerce 10.8.
+          - wp: '6.9'
+            wc: '10.8.0'
+          - wp: latest
+            wc: latest
+    env:
+      WP_CORE_DIR: /tmp/wordpress
+      DB_NAME: ffl_bridge_tests
+      DB_USER: root
+      DB_PASS: root
+      DB_HOST: 127.0.0.1
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          extensions: mysqli, gd, intl, zip
+          tools: composer:v2, wp-cli
+
+      - name: Start MySQL
+        run: |
+          sudo systemctl start mysql.service
+          mysqladmin --host=127.0.0.1 --user=root --password=root --wait=30 ping
+
+      - name: Install development dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Install WordPress ${{ matrix.wp }} and WooCommerce ${{ matrix.wc }}
+        run: bin/install-wp-tests.sh '${{ matrix.wp }}' '${{ matrix.wc }}'
+
+      - name: PHPUnit integration tests
+        run: composer test:integration
+
+      - name: Show the WordPress debug log
+        if: failure()
+        run: cat "${WP_CORE_DIR}/wp-content/debug.log" 2>/dev/null || echo 'No debug log.'
+
+  plugin-check:
+    name: Plugin Check (WordPress.org build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Build the WordPress.org package
+        run: bin/build-release.sh --target=wporg
+
+      # Errors fail this step. Warnings appear as annotations and in the
+      # job summary without failing it.
+      - name: Run Plugin Check
+        uses: WordPress/plugin-check-action@10857da14b6c2246d15402b3e69f777edcf8c12e # v1.1.9
+        with:
+          build-dir: dist/wporg-build/ffl-bridge-for-woocommerce
+          slug: ffl-bridge-for-woocommerce
+          include-experimental: 'true'
+          repo-token: ''
+
+      - name: Summarize Plugin Check results
+        if: always()
+        run: node .github/scripts/plugin-check-summary.mjs "${RUNNER_TEMP}/plugin-check-results.txt"
 
   package:
-    name: Reproducible release package
+    name: Build test and release packages
     needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -65,19 +159,40 @@ jobs:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Check self-hosted and WordPress.org build outputs
+      - name: Build test for the self-hosted and WordPress.org targets
         run: tests/build-release-test.sh
 
-      - name: Build release archive
-        run: bin/build-release.sh
-
-      - name: Verify archive and exclusions
+      - name: Check the WordPress.org ZIP has no updater
         shell: bash
         run: |
-          artifact="$(find dist -maxdepth 1 -type f -name 'ffl-bridge-for-woocommerce-*.zip' -print -quit)"
-          test -n "${artifact}"
+          bin/build-release.sh --target=wporg
+          version="$(sed -n 's/^[[:space:]]*\* Version:[[:space:]]*//p' ffl-bridge.php | head -n 1 | tr -d '\r')"
+          artifact="dist/${PLUGIN_SLUG}-${version}-wporg.zip"
           unzip -t "${artifact}"
-          if unzip -Z1 "${artifact}" | grep -E '(^|/)(\.distignore|\.git|\.github|bin|tests|vendor|composer\.(json|lock)|php(cs|unit)\.xml\.dist|CHANGELOG\.md|CONTRIBUTING\.md|README\.md|SECURITY\.md)(/|$)'; then
+          status=0
+          if unzip -Z1 "${artifact}" | grep -F 'class-ffl-bridge-updater.php'; then
+            echo 'The WordPress.org ZIP contains the updater file.' >&2
+            status=1
+          fi
+          for pattern in 'FFL_Bridge_Updater' 'Update URI' 'api/plugins/woocommerce/update' 'self-hosted-only'; do
+            if unzip -p "${artifact}" | grep -aF -- "${pattern}"; then
+              echo "The WordPress.org ZIP contains '${pattern}'." >&2
+              status=1
+            fi
+          done
+          exit "${status}"
+
+      - name: Build the self-hosted release archive
+        run: bin/build-release.sh
+
+      - name: Verify the self-hosted archive and exclusions
+        shell: bash
+        run: |
+          version="$(sed -n 's/^[[:space:]]*\* Version:[[:space:]]*//p' ffl-bridge.php | head -n 1 | tr -d '\r')"
+          artifact="dist/${PLUGIN_SLUG}-${version}.zip"
+          test -f "${artifact}"
+          unzip -t "${artifact}"
+          if unzip -Z1 "${artifact}" | grep -E '(^|/)(\.distignore|\.git|\.github|bin|tests|vendor|composer\.(json|lock)|phpunit(\.integration)?\.xml\.dist|phpcs\.xml\.dist|CHANGELOG\.md|CONTRIBUTING\.md|README\.md|SECURITY\.md)(/|$)'; then
             echo 'Release archive contains a development-only path.' >&2
             exit 1
           fi
