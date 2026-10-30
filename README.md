@@ -2,6 +2,8 @@
 
 FFL Bridge for WooCommerce adds server-verified FFL dealer selection to WooCommerce checkout and records the selected dealer as order metadata for fulfillment review.
 
+Available in the WordPress.org plugin directory: [FFL Bridge for WooCommerce](https://wordpress.org/plugins/ffl-bridge-for-woocommerce/).
+
 ## What it does
 
 - Supports both classic WooCommerce checkout and the WooCommerce Checkout Block.
@@ -25,13 +27,26 @@ The plugin is a dealer-selection and metadata tool. It does **not** change the s
 
 ## Install
 
-1. Download the current release from fflbridge.com: [ffl-bridge-woocommerce.zip](https://www.fflbridge.com/downloads/ffl-bridge-woocommerce.zip). This build includes the update checker described under [Updates](#updates). Do not upload a GitHub source-code archive.
+Choose one of these two options, then finish with steps 4 and 5.
+
+### Option A: Install from WordPress.org (recommended)
+
+1. In WordPress administration, open **Plugins > Add Plugin** and search for "FFL Bridge for WooCommerce".
+2. Install and activate it. You can also download it from [wordpress.org/plugins/ffl-bridge-for-woocommerce](https://wordpress.org/plugins/ffl-bridge-for-woocommerce/) and upload it under **Plugins > Add Plugin > Upload Plugin**.
+3. This copy updates through WordPress.org.
+
+### Option B: Install the fflbridge.com ZIP
+
+1. Download the current release from fflbridge.com: [ffl-bridge-woocommerce.zip](https://www.fflbridge.com/downloads/ffl-bridge-woocommerce.zip). This build includes the self-hosted update checker described under [Updates](#updates). Do not upload a GitHub source-code archive.
 2. In WordPress administration, open **Plugins > Add Plugin > Upload Plugin**.
 3. Upload the ZIP file, install it, and activate it.
-4. Open **WooCommerce > FFL Bridge** and configure the connection and checkout behavior.
-5. Test both dealer search and order placement in a staging environment before enabling the plugin on a production checkout.
 
 Each release is also published under its versioned name with a matching `.sha256` file, for example [ffl-bridge-for-woocommerce-1.2.1.zip.sha256](https://www.fflbridge.com/downloads/ffl-bridge-for-woocommerce-1.2.1.zip.sha256), which can be used to verify the download.
+
+### Both options
+
+4. Open **WooCommerce > FFL Bridge** and configure the connection and checkout behavior.
+5. Test both dealer search and order placement in a staging environment before enabling the plugin on a production checkout.
 
 ## Configure the credential
 
@@ -48,6 +63,8 @@ Alternatively, enter the key on **WooCommerce > FFL Bridge**. Never commit a rea
 Version 1.0.x sent the API key to the checkout browser. If a key was ever used with 1.0.x, committed to a repository, or included in a previously distributed build, revoke it in FFL Bridge and create a replacement before using 1.1.0. Upgrading prevents the new key from being exposed by the plugin, but cannot make an old exposed key safe.
 
 ## Updates
+
+Copies installed from WordPress.org update through WordPress.org. Only copies downloaded from fflbridge.com use the self-hosted update checker and manifest described below.
 
 From 1.2.0 the plugin updates itself from FFL Bridge. Installs older than 1.2.0 need one manual update to 1.2.0; after that, new versions appear under **Dashboard > Updates** and on the Plugins screen, where "View details" shows the changelog. WordPress auto-updates stay off until a store turns them on for this plugin.
 
