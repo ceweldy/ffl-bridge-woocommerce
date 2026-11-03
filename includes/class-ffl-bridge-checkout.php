@@ -495,15 +495,24 @@ final class FFL_Bridge_Checkout {
 	 * Validate and save metadata for Checkout Blocks / Store API orders.
 	 *
 	 * Throwing here causes the Store API checkout to fail with the message,
-	 * instead of accepting client-supplied extension data.
+	 * instead of accepting client-supplied extension data. A RouteException
+	 * makes the Store API answer 400 with the error code and message, which
+	 * the Checkout Block shows as an error notice. A plain Exception would
+	 * become a 500 woocommerce_rest_unknown_server_error.
 	 *
 	 * @param WC_Order $order Store API order.
-	 * @throws Exception If a required or selected dealer cannot be verified.
+	 * @throws \Automattic\WooCommerce\StoreApi\Exceptions\RouteException If a required or selected dealer cannot be verified.
+	 * @throws Exception If that class is missing and a dealer cannot be verified.
 	 * @return void
 	 */
 	public static function save_store_api_order( WC_Order $order ): void {
 		$result = self::verify_selection_for_checkout();
 		if ( is_wp_error( $result ) ) {
+			$route_exception = '\Automattic\WooCommerce\StoreApi\Exceptions\RouteException';
+			if ( class_exists( $route_exception ) ) {
+				throw new $route_exception( esc_html( $result->get_error_code() ), esc_html( $result->get_error_message() ), 400 );
+			}
+
 			throw new Exception( esc_html( $result->get_error_message() ) );
 		}
 
