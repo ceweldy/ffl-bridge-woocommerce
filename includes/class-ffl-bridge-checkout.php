@@ -7,6 +7,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
+use Automattic\WooCommerce\StoreApi\Exceptions\RouteException;
+
 /**
  * Owns the browser-to-session flow and order persistence.
  */
@@ -501,16 +503,15 @@ final class FFL_Bridge_Checkout {
 	 * become a 500 woocommerce_rest_unknown_server_error.
 	 *
 	 * @param WC_Order $order Store API order.
-	 * @throws \Automattic\WooCommerce\StoreApi\Exceptions\RouteException If a required or selected dealer cannot be verified.
+	 * @throws RouteException If a required or selected dealer cannot be verified.
 	 * @throws Exception If that class is missing and a dealer cannot be verified.
 	 * @return void
 	 */
 	public static function save_store_api_order( WC_Order $order ): void {
 		$result = self::verify_selection_for_checkout();
 		if ( is_wp_error( $result ) ) {
-			$route_exception = '\Automattic\WooCommerce\StoreApi\Exceptions\RouteException';
-			if ( class_exists( $route_exception ) ) {
-				throw new $route_exception( esc_html( $result->get_error_code() ), esc_html( $result->get_error_message() ), 400 );
+			if ( class_exists( RouteException::class ) ) {
+				throw new RouteException( esc_html( $result->get_error_code() ), esc_html( $result->get_error_message() ), 400 );
 			}
 
 			throw new Exception( esc_html( $result->get_error_message() ) );
