@@ -15,6 +15,8 @@ define( 'FFL_BRIDGE_PLUGIN_URL', 'https://store.example.test/wp-content/plugins/
 
 $GLOBALS['ffl_bridge_test_options']    = array();
 $GLOBALS['ffl_bridge_test_term_map']   = array();
+$GLOBALS['ffl_bridge_test_term_parents'] = array();
+$GLOBALS['ffl_bridge_test_logs']         = array();
 $GLOBALS['ffl_bridge_test_wc']         = null;
 $GLOBALS['ffl_bridge_test_home_url']   = 'https://store.example.test/';
 $GLOBALS['ffl_bridge_test_transients'] = array();
@@ -439,6 +441,43 @@ function wp_get_post_terms( int $post_id, string $taxonomy, array $args = array(
 	return $GLOBALS['ffl_bridge_test_term_map'][ $post_id ] ?? array();
 }
 
+/**
+ * Ancestors of a term, nearest first, from the ffl_bridge_test_term_parents
+ * map of term ID to parent term ID.
+ *
+ * @return array<int, int>
+ */
+function get_ancestors( int $object_id = 0, string $object_type = '', string $resource_type = '' ): array {
+	$ancestors = array();
+	$parents   = $GLOBALS['ffl_bridge_test_term_parents'];
+	while ( isset( $parents[ $object_id ] ) && ! in_array( $parents[ $object_id ], $ancestors, true ) ) {
+		$object_id   = $parents[ $object_id ];
+		$ancestors[] = $object_id;
+	}
+
+	return $ancestors;
+}
+
+/** Records log entries written through wc_get_logger(). */
+final class FFL_Bridge_Test_Logger {
+	/** @param array<string, mixed> $context Context. */
+	public function log( string $level, string $message, array $context = array() ): void {
+		$GLOBALS['ffl_bridge_test_logs'][] = array( 'level' => $level, 'message' => $message, 'context' => $context );
+	}
+}
+
+function wc_get_logger(): FFL_Bridge_Test_Logger {
+	return new FFL_Bridge_Test_Logger();
+}
+
+function wc_add_notice( string $message, string $notice_type = 'success', array $data = array() ): void {
+	$GLOBALS['ffl_bridge_test_notices'][] = array( $message, $notice_type );
+}
+
+function is_order_received_page(): bool {
+	return ! empty( $GLOBALS['ffl_bridge_test_order_received'] );
+}
+
 function WC(): FFL_Bridge_Test_WooCommerce {
 	return $GLOBALS['ffl_bridge_test_wc'];
 }
@@ -456,6 +495,7 @@ function set_transient( string $key, mixed $value, int $expiration ): bool {
 	return true;
 }
 
+require_once __DIR__ . '/stubs/RouteException.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-api-client.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-network.php';
 require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-coverage.php';
