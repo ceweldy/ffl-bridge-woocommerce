@@ -284,10 +284,18 @@ final class FFL_Bridge_Order {
 	/**
 	 * Display dealer details in My Account order view.
 	 *
+	 * The order-received page fires this hook too, inside the order details
+	 * table, after woocommerce_thankyou has already shown the block with the
+	 * follow-up instructions. Skip it there so the block appears once.
+	 *
 	 * @param WC_Order $order Order object.
 	 * @return void
 	 */
 	public static function display_order_details_ffl( WC_Order $order ): void {
+		if ( function_exists( 'is_order_received_page' ) && is_order_received_page() ) {
+			return;
+		}
+
 		$ffl = self::get_ffl_data( $order );
 		if ( null !== $ffl ) {
 			self::render_customer_details( $ffl, 'account' );
