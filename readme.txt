@@ -74,7 +74,7 @@ Dealer results and status labels support your workflow. They are not legal advic
 == Installation ==
 
 1. In WordPress, open Plugins > Add New Plugin, search for "FFL Bridge for WooCommerce", then install and activate it. WooCommerce 10.8 or newer must be active.
-2. Open WooCommerce > FFL Bridge and enter your FFL Bridge API key. For stronger separation, define `FFL_BRIDGE_API_KEY` in `wp-config.php` instead.
+2. Open WooCommerce > FFL Bridge and enter your FFL Bridge server API key (starts with `ffl_live_`). A browser key (starts with `ffl_pub_`) does not work with the plugin. For stronger separation, define `FFL_BRIDGE_API_KEY` in `wp-config.php` instead.
 3. Choose the dealer selection mode, the license copy email and fax, the product categories that need a dealer, and whether a selection is required.
 4. Use the connection and coverage test with a ZIP code your customers use.
 5. Place a test order in a staging site before going live.
@@ -83,7 +83,7 @@ Dealer results and status labels support your workflow. They are not legal advic
 
 = Do I need an FFL Bridge account? =
 
-Yes. Dealer search and verification use the FFL Bridge service, which needs an account, an API key, and your store's site address added to that key.
+Yes. Dealer search and verification use the FFL Bridge service, which needs an account with a verified email address and a server API key (starts with `ffl_live_`). No domain or site address is needed on the key.
 
 = Can shoppers check out when no confirmed dealer is nearby? =
 

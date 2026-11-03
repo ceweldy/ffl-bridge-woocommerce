@@ -22,7 +22,7 @@ The plugin is a dealer-selection and metadata tool. It does **not** change the s
 - WordPress 6.9 or newer
 - PHP 8.3 or newer
 - WooCommerce 10.8 or newer
-- An FFL Bridge account, API key, and authorized site origin
+- An FFL Bridge account with a verified email address and a server API key (starts with `ffl_live_`; no domain is needed on the key)
 - HTTPS for a production store is strongly recommended
 
 ## Install
@@ -56,7 +56,7 @@ The preferred configuration keeps the key out of the WordPress options table. Ad
 define( 'FFL_BRIDGE_API_KEY', 'ffl_live_replace_with_your_key' );
 ```
 
-Alternatively, enter the key on **WooCommerce > FFL Bridge**. Never commit a real key to source control or include it in a support request.
+Use the server key (starts with `ffl_live_`), not a browser key (starts with `ffl_pub_`). A server key needs no domain or site address. Alternatively, enter the key on **WooCommerce > FFL Bridge**. Never commit a real key to source control or include it in a support request.
 
 ### Required upgrade action from 1.0.x
 

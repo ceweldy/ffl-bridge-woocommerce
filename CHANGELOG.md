@@ -4,6 +4,23 @@ All notable changes to FFL Bridge for WooCommerce are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The admin connection test says why FFL Bridge rejected the request: an invalid or revoked key (which also covers an unverified account on the current API), an unverified account email, a server key with an allowed-domain list that leaves out this site, a key that is not allowed to search, the rate limit, or a server that cannot reach www.fflbridge.com. Shoppers see one short message instead of account details, and the specific reason is written to the WooCommerce log.
+- Checkout Block and Store API orders without a required dealer fail with HTTP 400 `ffl_bridge_selection_required` and the message "Select and verify a transfer dealer before placing the order." instead of a 500 `woocommerce_rest_unknown_server_error`.
+- A selected product category also covers its child categories, so a product in Firearms > Rifles uses the dealer workflow when only Firearms is selected.
+- The order-received page shows the selected transfer dealer once instead of twice. The My Account order view is unchanged.
+
+### Changed
+
+- The readme and README say the plugin needs an account with a verified email and a server API key (starts with `ffl_live_`), and that no domain or site address is needed on that key.
+
+### Added
+
+- Unit tests for each API error code, the admin connection test text, the shopper search message, the Store API exception, child categories and the order-received block, and integration tests for the Store API checkout, child categories, the order-received page and the connection test.
+
 ## [1.2.1] - 2026-10-10
 
 ### Security

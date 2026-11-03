@@ -7,6 +7,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
+use Automattic\WooCommerce\StoreApi\Exceptions\RouteException;
+
 /**
  * Owns the browser-to-session flow and order persistence.
  */
@@ -53,7 +55,8 @@ final class FFL_Bridge_Checkout {
 	 * Determine whether the current cart contains an applicable product.
 	 *
 	 * Empty category settings intentionally apply the workflow to every cart
-	 * product so a fresh installation fails safely until configured.
+	 * product so a fresh installation fails safely until configured. A
+	 * selected category also covers all of its child categories.
 	 *
 	 * @return bool
 	 */
@@ -75,7 +78,21 @@ final class FFL_Bridge_Checkout {
 			}
 
 			$product_categories = wp_get_post_terms( $product_id, 'product_cat', array( 'fields' => 'ids' ) );
-			if ( ! is_wp_error( $product_categories ) && array_intersect( $categories, array_map( 'absint', $product_categories ) ) ) {
+			if ( is_wp_error( $product_categories ) ) {
+				continue;
+			}
+
+			// A selected parent category also covers its child categories, so
+			// a product in Firearms > Rifles applies when Firearms is selected.
+			$covered = array();
+			foreach ( array_map( 'absint', $product_categories ) as $term_id ) {
+				$covered[] = $term_id;
+				foreach ( get_ancestors( $term_id, 'product_cat', 'taxonomy' ) as $ancestor ) {
+					$covered[] = absint( $ancestor );
+				}
+			}
+
+			if ( array_intersect( $categories, $covered ) ) {
 				return true;
 			}
 		}
@@ -480,15 +497,23 @@ final class FFL_Bridge_Checkout {
 	 * Validate and save metadata for Checkout Blocks / Store API orders.
 	 *
 	 * Throwing here causes the Store API checkout to fail with the message,
-	 * instead of accepting client-supplied extension data.
+	 * instead of accepting client-supplied extension data. A RouteException
+	 * makes the Store API answer 400 with the error code and message, which
+	 * the Checkout Block shows as an error notice. A plain Exception would
+	 * become a 500 woocommerce_rest_unknown_server_error.
 	 *
 	 * @param WC_Order $order Store API order.
-	 * @throws Exception If a required or selected dealer cannot be verified.
+	 * @throws RouteException If a required or selected dealer cannot be verified.
+	 * @throws Exception If that class is missing and a dealer cannot be verified.
 	 * @return void
 	 */
 	public static function save_store_api_order( WC_Order $order ): void {
 		$result = self::verify_selection_for_checkout();
 		if ( is_wp_error( $result ) ) {
+			if ( class_exists( RouteException::class ) ) {
+				throw new RouteException( esc_html( $result->get_error_code() ), esc_html( $result->get_error_message() ), 400 );
+			}
+
 			throw new Exception( esc_html( $result->get_error_message() ) );
 		}
 

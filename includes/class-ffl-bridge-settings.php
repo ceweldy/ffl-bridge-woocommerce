@@ -409,7 +409,7 @@ final class FFL_Bridge_Settings {
 
 		$transfer = FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 25, true, true );
 		if ( is_wp_error( $transfer ) ) {
-			wp_send_json_error( array( 'message' => $transfer->get_error_message() ), 400 );
+			wp_send_json_error( array( 'message' => self::connection_error_message( $transfer ) ), 400 );
 		}
 
 		// Count what hybrid mode would offer, using the same rules as checkout.
@@ -425,6 +425,41 @@ final class FFL_Bridge_Settings {
 		$nearby   = FFL_Bridge_Network::OUTCOME_CONFIRMED === $resolved['outcome'] ? null : count( $resolved['dealers'] );
 
 		wp_send_json_success( array( 'message' => self::connection_summary( $zip, $radius, $transfer, $nearby ) ) );
+	}
+
+	/**
+	 * Explain a failed connection test to the store administrator.
+	 *
+	 * The API client keeps its messages short because shoppers can see them.
+	 * Here the error code is mapped to text that says what to fix. Unknown
+	 * codes fall back to the client message.
+	 *
+	 * @param WP_Error $error Error from the API client.
+	 * @return string Plain text.
+	 */
+	public static function connection_error_message( WP_Error $error ): string {
+		switch ( $error->get_error_code() ) {
+			case 'ffl_bridge_not_configured':
+				return __( 'Enter and save your FFL Bridge server API key (starts with ffl_live_), then test again.', 'ffl-bridge-for-woocommerce' );
+			case 'ffl_bridge_api_unauthorized':
+				// The API before EMAIL_NOT_VERIFIED also answers 401 for an
+				// unverified account, so the text covers both cases.
+				return __( 'FFL Bridge rejected this API key. Check that you pasted the full server key (starts with ffl_live_) and that it has not been revoked. If you just signed up, verify your account email first.', 'ffl-bridge-for-woocommerce' );
+			case 'ffl_bridge_email_not_verified':
+				return __( 'Verify the email address on your FFL Bridge account, then test again.', 'ffl-bridge-for-woocommerce' );
+			case 'ffl_bridge_domain_not_allowed':
+				return __( 'This server key has an allowed-domain list that does not include this site. Server keys do not need a domain. Remove the list or add this site\'s address, then test again.', 'ffl-bridge-for-woocommerce' );
+			case 'ffl_bridge_key_scope_not_allowed':
+				return __( 'This API key is not allowed to search dealers. Use a server key (starts with ffl_live_), not a browser key, then test again.', 'ffl-bridge-for-woocommerce' );
+			case 'ffl_bridge_api_forbidden':
+				return __( 'FFL Bridge refused this request. Check the API key and your FFL Bridge account, then test again.', 'ffl-bridge-for-woocommerce' );
+			case 'ffl_bridge_api_limited':
+				return __( 'FFL Bridge rate limit reached for this API key. Wait a few minutes, then test again.', 'ffl-bridge-for-woocommerce' );
+			case 'ffl_bridge_api_unavailable':
+				return __( 'Your server could not reach www.fflbridge.com, or FFL Bridge is temporarily unavailable. Check outbound HTTPS from this server, then test again.', 'ffl-bridge-for-woocommerce' );
+			default:
+				return $error->get_error_message();
+		}
 	}
 
 	/**

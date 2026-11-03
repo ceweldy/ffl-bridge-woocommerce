@@ -15,6 +15,9 @@ abstract class FFL_Bridge_TestCase extends PHPUnitTestCase {
 
 		$GLOBALS['ffl_bridge_test_options']    = array();
 		$GLOBALS['ffl_bridge_test_term_map']   = array();
+		$GLOBALS['ffl_bridge_test_term_parents'] = array();
+		$GLOBALS['ffl_bridge_test_logs']         = array();
+		$GLOBALS['ffl_bridge_test_notices']      = array();
 		$GLOBALS['ffl_bridge_test_transients'] = array();
 		$GLOBALS['ffl_bridge_test_settings_errors'] = array();
 		$GLOBALS['ffl_bridge_test_filters']         = array();
@@ -29,6 +32,7 @@ abstract class FFL_Bridge_TestCase extends PHPUnitTestCase {
 		unset( $GLOBALS['ffl_bridge_test_download_file'] );
 		$GLOBALS['ffl_bridge_test_user_meta']       = array();
 		unset( $GLOBALS['ffl_bridge_test_screen'] );
+		unset( $GLOBALS['ffl_bridge_test_order_received'] );
 		$_POST    = array();
 		$_GET     = array();
 		$_REQUEST = array();
