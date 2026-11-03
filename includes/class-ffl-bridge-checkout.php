@@ -53,7 +53,8 @@ final class FFL_Bridge_Checkout {
 	 * Determine whether the current cart contains an applicable product.
 	 *
 	 * Empty category settings intentionally apply the workflow to every cart
-	 * product so a fresh installation fails safely until configured.
+	 * product so a fresh installation fails safely until configured. A
+	 * selected category also covers all of its child categories.
 	 *
 	 * @return bool
 	 */
@@ -75,7 +76,21 @@ final class FFL_Bridge_Checkout {
 			}
 
 			$product_categories = wp_get_post_terms( $product_id, 'product_cat', array( 'fields' => 'ids' ) );
-			if ( ! is_wp_error( $product_categories ) && array_intersect( $categories, array_map( 'absint', $product_categories ) ) ) {
+			if ( is_wp_error( $product_categories ) ) {
+				continue;
+			}
+
+			// A selected parent category also covers its child categories, so
+			// a product in Firearms > Rifles applies when Firearms is selected.
+			$covered = array();
+			foreach ( array_map( 'absint', $product_categories ) as $term_id ) {
+				$covered[] = $term_id;
+				foreach ( get_ancestors( $term_id, 'product_cat', 'taxonomy' ) as $ancestor ) {
+					$covered[] = absint( $ancestor );
+				}
+			}
+
+			if ( array_intersect( $categories, $covered ) ) {
 				return true;
 			}
 		}
