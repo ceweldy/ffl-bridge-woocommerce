@@ -20,6 +20,16 @@ final class FFL_Bridge_API_Client {
 	public const ALLOWED_RADII = array( 10, 25, 50, 100 );
 
 	/**
+	 * WP_Error codes for known 403 reasons in the API error body. Any other
+	 * 403 becomes the generic ffl_bridge_api_forbidden.
+	 */
+	private const FORBIDDEN_CODES = array(
+		'EMAIL_NOT_VERIFIED'    => 'ffl_bridge_email_not_verified',
+		'DOMAIN_NOT_ALLOWED'    => 'ffl_bridge_domain_not_allowed',
+		'KEY_SCOPE_NOT_ALLOWED' => 'ffl_bridge_key_scope_not_allowed',
+	);
+
+	/**
 	 * Return the configured API key.
 	 *
 	 * A wp-config.php constant is preferred because it keeps the credential out
@@ -449,18 +459,32 @@ final class FFL_Bridge_API_Client {
 
 		$status = (int) wp_remote_retrieve_response_code( $response );
 
-		if ( 401 === $status ) {
-			self::log( 'error', 'API credential rejected.' );
-			return new WP_Error( 'ffl_bridge_api_unauthorized', __( 'The store\'s FFL Bridge connection needs attention.', 'ffl-bridge-for-woocommerce' ) );
-		}
-
-		if ( 403 === $status ) {
-			self::log( 'error', 'API origin rejected.' );
-			return new WP_Error( 'ffl_bridge_api_forbidden', __( 'This store domain is not authorized in FFL Bridge.', 'ffl-bridge-for-woocommerce' ) );
+		// Credential and account problems get their own codes so the admin
+		// connection test can explain them. The message stays short and
+		// non-technical because shoppers can see it at checkout.
+		if ( 401 === $status || 403 === $status ) {
+			$api_code = self::error_code( $response );
+			$code     = 401 === $status ? 'ffl_bridge_api_unauthorized' : ( self::FORBIDDEN_CODES[ $api_code ] ?? 'ffl_bridge_api_forbidden' );
+			self::log(
+				'error',
+				'API request rejected.',
+				array(
+					'status'   => $status,
+					'api_code' => 1 === preg_match( '/\A[A-Z0-9_]{1,64}\z/', $api_code ) ? $api_code : '',
+					'reason'   => $code,
+				)
+			);
+			return new WP_Error( $code, __( 'Dealer search is not available for this store right now. Contact the store.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
 		if ( 429 === $status ) {
+			self::log( 'warning', 'API rate limit reached.', array( 'status' => $status ) );
 			return new WP_Error( 'ffl_bridge_api_limited', __( 'The store has reached its FFL search limit. Try again later or contact the store.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		if ( $status >= 500 ) {
+			self::log( 'warning', 'API server error.', array( 'status' => $status ) );
+			return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
 		if ( 404 === $status ) {
