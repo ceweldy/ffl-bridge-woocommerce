@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Optional setting "Email the selected dealer when an order is placed", off by default. When a store turns it on, after an order with a verified dealer is saved on classic or Block checkout, the plugin asks FFL Bridge (`POST /api/v1/orders` with `sendFflEmail: true` and `sendCustomerEmail: false`) to email the dealer, sending only the dealer identifier, the shopper's billing name and email address, and the order number. The request is sent once per order with a 6 second timeout; a failure is logged and noted on the order and never fails checkout. With the setting off, no shopper data is sent. The plugin still never emails dealers itself.
 - Unit tests for each API error code, the admin connection test text, the shopper search message, the Store API exception, child categories and the order-received block, and integration tests for the Store API checkout, child categories, the order-received page and the connection test.
 
 ## [1.2.1] - 2026-10-10

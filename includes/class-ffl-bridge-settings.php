@@ -211,6 +211,15 @@ final class FFL_Bridge_Settings {
 		);
 		register_setting(
 			'ffl_bridge_settings',
+			FFL_Bridge_Checkout::DEALER_NOTICE_OPTION,
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( __CLASS__, 'sanitize_dealer_notice' ),
+				'default'           => 'no',
+			)
+		);
+		register_setting(
+			'ffl_bridge_settings',
 			FFL_Bridge_Followup::FAX_OPTION,
 			array(
 				'type'              => 'string',
@@ -307,6 +316,16 @@ final class FFL_Bridge_Settings {
 	 */
 	public static function sanitize_required( mixed $input ): string {
 		return 'no' === $input ? 'no' : 'yes';
+	}
+
+	/**
+	 * Sanitize the dealer notice setting. Only an exact 'yes' turns it on.
+	 *
+	 * @param mixed $input Submitted value.
+	 * @return string
+	 */
+	public static function sanitize_dealer_notice( mixed $input ): string {
+		return 'yes' === $input ? 'yes' : 'no';
 	}
 
 	/**
@@ -549,6 +568,7 @@ final class FFL_Bridge_Settings {
 		$dealer_mode         = FFL_Bridge_Network::get_dealer_mode();
 		$license_email       = FFL_Bridge_Followup::sanitize_email_setting( get_option( FFL_Bridge_Followup::EMAIL_OPTION, '' ) );
 		$license_fax         = FFL_Bridge_Followup::contact_fax();
+		$dealer_notice       = self::sanitize_dealer_notice( get_option( FFL_Bridge_Checkout::DEALER_NOTICE_OPTION, 'no' ) );
 		$coverage_log        = FFL_Bridge_Coverage::get_log();
 		$constant_key        = defined( 'FFL_BRIDGE_API_KEY' );
 		$key_suffix          = FFL_Bridge_API_Client::get_key_suffix();
@@ -639,6 +659,16 @@ final class FFL_Bridge_Settings {
 						<td>
 							<input type="email" id="ffl_bridge_license_email" name="ffl_bridge_license_email" class="regular-text" value="<?php echo esc_attr( $license_email ); ?>" placeholder="<?php echo esc_attr( (string) get_option( 'admin_email', '' ) ); ?>">
 							<p class="description"><?php echo esc_html__( 'Where shoppers ask their dealer to email a license copy. Leave blank to use the site admin email.', 'ffl-bridge-for-woocommerce' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="ffl_bridge_send_dealer_email"><?php echo esc_html__( 'Email the selected dealer when an order is placed', 'ffl-bridge-for-woocommerce' ); ?></label></th>
+						<td>
+							<select id="ffl_bridge_send_dealer_email" name="ffl_bridge_send_dealer_email">
+								<option value="no" <?php selected( $dealer_notice, 'no' ); ?>><?php echo esc_html__( 'No, do not send (default)', 'ffl-bridge-for-woocommerce' ); ?></option>
+								<option value="yes" <?php selected( $dealer_notice, 'yes' ); ?>><?php echo esc_html__( 'Yes, ask FFL Bridge to email the dealer', 'ffl-bridge-for-woocommerce' ); ?></option>
+							</select>
+							<p class="description"><?php echo esc_html__( 'Off by default. When on, after an order with a verified dealer is placed, this site sends the shopper name, email address, and order number to FFL Bridge so FFL Bridge can email the dealer about the incoming transfer. FFL Bridge only emails dealers that already have an email address on file. This plugin never emails dealers itself, FFL Bridge does not email the shopper, and WooCommerce order emails are unchanged. If the notice fails, the order is not affected and a note is added to it. You can leave this off.', 'ffl-bridge-for-woocommerce' ); ?></p>
 						</td>
 					</tr>
 					<tr>

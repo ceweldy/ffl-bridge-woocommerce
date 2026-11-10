@@ -23,8 +23,9 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_required'] = 'yes';
 
 		// Dealer lookups are cached for the request; each test is a new request.
-		$cache = new ReflectionProperty( FFL_Bridge_Checkout::class, 'verification_cache' );
-		$cache->setValue( null, array() );
+		foreach ( array( 'verification_cache', 'notices_handled' ) as $property ) {
+			( new ReflectionProperty( FFL_Bridge_Checkout::class, $property ) )->setValue( null, array() );
+		}
 	}
 
 	public function test_dealer_notice_is_off_by_default(): void {
@@ -166,6 +167,19 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		FFL_Bridge_Checkout::notify_dealer( $order );
 		FFL_Bridge_Checkout::save_store_api_order( $order );
 		FFL_Bridge_Checkout::notify_dealer( $order );
+
+		$this->assertCount( 1, $this->order_requests() );
+	}
+
+	public function test_a_second_hook_with_a_stale_copy_of_the_order_does_not_send_again(): void {
+		$GLOBALS['ffl_bridge_test_options'][ self::OPTION ] = 'yes';
+		$meta  = array( '_ffl_bridge_dealer_id' => self::DEALER_ID, '_ffl_bridge_dealer_notice' => 'queued' );
+		$first = $this->shopper_order( $meta );
+		$stale = $this->shopper_order( $meta );
+
+		$GLOBALS['ffl_bridge_test_http_responses'][] = $this->response( 201, array( 'success' => true ) );
+		FFL_Bridge_Checkout::notify_dealer( $first );
+		FFL_Bridge_Checkout::notify_dealer_classic( $stale->get_id(), array(), $stale );
 
 		$this->assertCount( 1, $this->order_requests() );
 	}
