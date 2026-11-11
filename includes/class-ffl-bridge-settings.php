@@ -157,6 +157,15 @@ final class FFL_Bridge_Settings {
 		);
 		register_setting(
 			'ffl_bridge_settings',
+			FFL_Bridge_API_Client::API_BASE_URL_OPTION,
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( __CLASS__, 'sanitize_api_base_url' ),
+				'default'           => '',
+			)
+		);
+		register_setting(
+			'ffl_bridge_settings',
 			'ffl_bridge_theme',
 			array(
 				'type'              => 'string',
@@ -296,6 +305,46 @@ final class FFL_Bridge_Settings {
 		}
 
 		return $value;
+	}
+
+	/**
+	 * Sanitize the FFL Bridge API base URL setting.
+	 *
+	 * An empty value, or the production default, is stored as an empty string
+	 * so the plugin follows the default. Anything that is not a plain HTTPS URL
+	 * is rejected and stored as empty, so the plugin falls back to the default
+	 * instead of calling an unsafe address. While the FFL_BRIDGE_API_BASE_URL
+	 * constant is defined, or for a user without the settings capability, the
+	 * saved value is kept.
+	 *
+	 * @param mixed $input Submitted value.
+	 * @return string
+	 */
+	public static function sanitize_api_base_url( mixed $input ): string {
+		$current = get_option( FFL_Bridge_API_Client::API_BASE_URL_OPTION, '' );
+		$current = FFL_Bridge_API_Client::normalize_api_base_url( $current );
+
+		if ( defined( 'FFL_BRIDGE_API_BASE_URL' ) || ! current_user_can( self::settings_capability() ) ) {
+			return $current;
+		}
+
+		$value = is_string( $input ) ? trim( wp_unslash( $input ) ) : '';
+		if ( '' === $value ) {
+			return '';
+		}
+
+		$url = FFL_Bridge_API_Client::normalize_api_base_url( $value );
+		if ( '' === $url ) {
+			add_settings_error(
+				FFL_Bridge_API_Client::API_BASE_URL_OPTION,
+				'ffl_bridge_invalid_api_base_url',
+				esc_html__( 'The FFL Bridge API base URL must be an HTTPS address such as https://www.fflbridge.com/api/v1, without a user name, password, query string, or fragment. The default address will be used.', 'ffl-bridge-for-woocommerce' ),
+				'error'
+			);
+			return '';
+		}
+
+		return FFL_Bridge_API_Client::DEFAULT_API_BASE_URL === $url ? '' : $url;
 	}
 
 	/**
@@ -572,6 +621,9 @@ final class FFL_Bridge_Settings {
 		$coverage_log        = FFL_Bridge_Coverage::get_log();
 		$constant_key        = defined( 'FFL_BRIDGE_API_KEY' );
 		$key_suffix          = FFL_Bridge_API_Client::get_key_suffix();
+		$constant_base_url   = defined( 'FFL_BRIDGE_API_BASE_URL' );
+		$saved_base_url      = FFL_Bridge_API_Client::normalize_api_base_url( get_option( FFL_Bridge_API_Client::API_BASE_URL_OPTION, '' ) );
+		$active_base_url     = FFL_Bridge_API_Client::get_api_base_url();
 		$categories          = get_terms(
 			array(
 				'taxonomy'   => 'product_cat',
@@ -612,6 +664,36 @@ final class FFL_Bridge_Settings {
 							</p>
 							<?php if ( ! $constant_key && '' !== $key_suffix ) : ?>
 								<label><input type="checkbox" name="ffl_bridge_remove_api_key" value="1"> <?php echo esc_html__( 'Remove the saved API key', 'ffl-bridge-for-woocommerce' ); ?></label>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="ffl_bridge_api_base_url"><?php echo esc_html__( 'FFL Bridge API base URL', 'ffl-bridge-for-woocommerce' ); ?></label></th>
+						<td>
+							<input
+								type="url"
+								id="ffl_bridge_api_base_url"
+								name="ffl_bridge_api_base_url"
+								value="<?php echo esc_attr( $saved_base_url ); ?>"
+								class="regular-text code"
+								placeholder="<?php echo esc_attr( FFL_Bridge_API_Client::DEFAULT_API_BASE_URL ); ?>"
+								spellcheck="false"
+								<?php disabled( $constant_base_url ); ?>
+							>
+							<p class="description">
+								<?php if ( $constant_base_url ) : ?>
+									<?php echo esc_html__( 'The FFL_BRIDGE_API_BASE_URL constant in wp-config.php is defined, so this field is overridden. Remove or replace it there.', 'ffl-bridge-for-woocommerce' ); ?>
+								<?php else : ?>
+									<?php echo wp_kses_post( __( 'Most stores should leave this blank to use the default, <code>https://www.fflbridge.com/api/v1</code>. Only change it to test against an FFL Bridge preview or staging server. HTTPS is required. <code>FFL_BRIDGE_API_BASE_URL</code> in <code>wp-config.php</code> or the <code>ffl_bridge_api_base_url</code> filter overrides the saved value.', 'ffl-bridge-for-woocommerce' ) ); ?>
+								<?php endif; ?>
+							</p>
+							<?php if ( FFL_Bridge_API_Client::DEFAULT_API_BASE_URL !== $active_base_url ) : ?>
+								<p class="description">
+									<?php
+									/* translators: %s: API base URL in use. */
+									echo esc_html( sprintf( __( 'Requests currently go to %s.', 'ffl-bridge-for-woocommerce' ), $active_base_url ) );
+									?>
+								</p>
 							<?php endif; ?>
 						</td>
 					</tr>
