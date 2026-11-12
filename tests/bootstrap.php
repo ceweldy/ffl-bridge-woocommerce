@@ -58,6 +58,9 @@ class WC_Order {
 
 	public int $saves = 0;
 
+	/** @var array<string, string> Billing fields: first_name, last_name, email, phone. */
+	public array $billing = array();
+
 	/** @param array<string, mixed> $meta Initial metadata. */
 	public function __construct( private array $meta = array(), private int $id = 501 ) {}
 
@@ -67,6 +70,22 @@ class WC_Order {
 
 	public function get_order_number(): string {
 		return (string) $this->id;
+	}
+
+	public function get_billing_first_name(): string {
+		return $this->billing['first_name'] ?? '';
+	}
+
+	public function get_billing_last_name(): string {
+		return $this->billing['last_name'] ?? '';
+	}
+
+	public function get_billing_email(): string {
+		return $this->billing['email'] ?? '';
+	}
+
+	public function get_billing_phone(): string {
+		return $this->billing['phone'] ?? '';
 	}
 
 	public function get_meta( string $key ): mixed {

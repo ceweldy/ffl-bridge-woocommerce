@@ -171,6 +171,9 @@ function ffl_bridge_add_privacy_policy_content(): void {
 	$content  = '<p>' . esc_html__( 'When a shopper searches for an FFL dealer, this site sends the search ZIP code, radius, site origin, and technical request metadata to FFL Bridge. The site credential is transmitted server-to-server and is never sent to the shopper\'s browser.', 'ffl-bridge-for-woocommerce' ) . '</p>';
 	$content .= '<p>' . esc_html__( 'To show store administrators where shoppers could not find a transfer dealer, the plugin stores the first three digits of a searched ZIP code, the search radius, and counts for up to 31 days (30 days per search, kept by day). These records are not linked to a shopper or an order.', 'ffl-bridge-for-woocommerce' ) . '</p>';
 	$content .= '<p>' . esc_html__( 'When store staff mark a dealer transfer as confirmed, the plugin sends the dealer identifier, license number, order number, an optional staff note, and an optional copy of the dealer license to FFL Bridge. A license copy uploaded by staff is stored privately with the order.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	if ( class_exists( 'FFL_Bridge_Checkout' ) && FFL_Bridge_Checkout::dealer_notice_enabled() ) {
+		$content .= '<p>' . esc_html__( 'When an order with a selected transfer dealer is placed, this site sends the customer name, email address, order number, and the dealer identifier to FFL Bridge so FFL Bridge can email the dealer about the order.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	}
 	$content .= '<p>' . wp_kses_post(
 		sprintf(
 			/* translators: 1: privacy-policy URL, 2: terms URL. */

@@ -24,11 +24,30 @@ final class FFL_Bridge_Checkout {
 	private const ORDER_META_SCHEMA = '1';
 
 	/**
+	 * Store setting that asks FFL Bridge to email the selected dealer. Off
+	 * ('no') unless the store turns it on.
+	 */
+	public const DEALER_NOTICE_OPTION = 'ffl_bridge_send_dealer_email';
+
+	/**
+	 * Order meta that tracks the dealer notice: queued, sent, failed, or skipped.
+	 */
+	private const DEALER_NOTICE_META = '_ffl_bridge_dealer_notice';
+
+	/**
 	 * Request-local cache of canonical dealer lookups.
 	 *
 	 * @var array<string, array<string, mixed>|WP_Error>
 	 */
 	private static array $verification_cache = array();
+
+	/**
+	 * Order IDs whose dealer notice was handled in this request, so a second
+	 * hook with a stale order object cannot send it twice.
+	 *
+	 * @var array<int, true>
+	 */
+	private static array $notices_handled = array();
 
 	/**
 	 * Register hooks.
@@ -41,6 +60,8 @@ final class FFL_Bridge_Checkout {
 		add_action( 'woocommerce_checkout_process', array( __CLASS__, 'validate_classic_checkout' ) );
 		add_action( 'woocommerce_checkout_create_order', array( __CLASS__, 'save_classic_order' ), 10, 2 );
 		add_action( 'woocommerce_store_api_checkout_update_order_meta', array( __CLASS__, 'save_store_api_order' ), 10, 1 );
+		add_action( 'woocommerce_checkout_order_processed', array( __CLASS__, 'notify_dealer_classic' ), 20, 3 );
+		add_action( 'woocommerce_store_api_checkout_order_processed', array( __CLASS__, 'notify_dealer' ), 20, 1 );
 		add_action( 'woocommerce_thankyou', array( __CLASS__, 'clear_selection' ), 50 );
 
 		add_action( 'wp_ajax_ffl_bridge_search', array( __CLASS__, 'ajax_search' ) );
@@ -687,11 +708,142 @@ final class FFL_Bridge_Checkout {
 			self::status_meta( $dealer )
 		);
 
+		// The notice is sent later, once the order is saved and has a number.
+		// Nothing is queued, and nothing about the shopper leaves the site,
+		// unless the store turned the dealer notice on.
+		if ( self::dealer_notice_enabled() ) {
+			$meta[ self::DEALER_NOTICE_META ] = 'queued';
+		}
+
 		foreach ( $meta as $key => $value ) {
 			$order->update_meta_data( $key, $value );
 		}
 
 		$order->add_order_note( self::selection_note( $dealer ) );
+	}
+
+	/**
+	 * Determine whether the store asked FFL Bridge to email selected dealers.
+	 *
+	 * @return bool
+	 */
+	public static function dealer_notice_enabled(): bool {
+		return 'yes' === get_option( self::DEALER_NOTICE_OPTION, 'no' );
+	}
+
+	/**
+	 * Classic checkout: send a queued dealer notice after the order is saved.
+	 *
+	 * @param mixed $order_id Order ID.
+	 * @param mixed $posted_data Posted checkout data.
+	 * @param mixed $order Order object.
+	 * @return void
+	 */
+	public static function notify_dealer_classic( mixed $order_id = null, mixed $posted_data = null, mixed $order = null ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundBeforeLastUsed -- WooCommerce hook signature.
+		if ( ! $order instanceof WC_Order && function_exists( 'wc_get_order' ) && is_numeric( $order_id ) ) {
+			$order = wc_get_order( absint( $order_id ) );
+		}
+
+		if ( $order instanceof WC_Order ) {
+			self::notify_dealer( $order );
+		}
+	}
+
+	/**
+	 * Send a queued dealer notice through FFL Bridge.
+	 *
+	 * Runs after the order is saved, on both checkouts. Only an order whose
+	 * verified dealer was saved by this plugin at checkout while the setting
+	 * was on is queued, and the notice is sent at most once. It is skipped
+	 * when the setting has since been turned off. A failure is logged and
+	 * noted on the order, and never fails or rolls back the order.
+	 *
+	 * @param WC_Order $order Saved order.
+	 * @return void
+	 */
+	public static function notify_dealer( WC_Order $order ): void {
+		try {
+			$order_id = (int) $order->get_id();
+			if ( 'queued' !== $order->get_meta( self::DEALER_NOTICE_META ) || ( $order_id > 0 && isset( self::$notices_handled[ $order_id ] ) ) ) {
+				return;
+			}
+
+			if ( $order_id > 0 ) {
+				self::$notices_handled[ $order_id ] = true;
+			}
+
+			if ( ! self::dealer_notice_enabled() ) {
+				self::finish_dealer_notice( $order, 'skipped', '' );
+				return;
+			}
+
+			$dealer_id = (string) $order->get_meta( '_ffl_bridge_dealer_id' );
+			$name      = trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
+			$email     = $order->get_billing_email();
+			$reference = (string) $order->get_order_number();
+			if ( '' === $dealer_id || '' === $name || '' === $reference || ! is_email( $email ) || ! FFL_Bridge_API_Client::is_configured() ) {
+				self::finish_dealer_notice( $order, 'skipped', __( 'FFL Bridge was not asked to email the dealer because the order or the API key is missing details.', 'ffl-bridge-for-woocommerce' ) );
+				return;
+			}
+
+			$result = FFL_Bridge_API_Client::create_order(
+				array(
+					'fflId'           => $dealer_id,
+					'customerName'    => $name,
+					'customerEmail'   => $email,
+					'externalOrderId' => $reference,
+				)
+			);
+		} catch ( Throwable $error ) {
+			$result = new WP_Error( 'ffl_bridge_order_failed', get_class( $error ) );
+		}
+
+		if ( is_wp_error( $result ) ) {
+			self::log_notice_failure( $result->get_error_code() );
+			self::finish_dealer_notice( $order, 'failed', __( 'FFL Bridge could not be asked to email the dealer. The order is not affected. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' ) );
+			return;
+		}
+
+		self::finish_dealer_notice( $order, 'sent', __( 'FFL Bridge was asked to email the selected dealer about this order.', 'ffl-bridge-for-woocommerce' ) );
+	}
+
+	/**
+	 * Record the dealer notice outcome on the order without ever throwing.
+	 *
+	 * @param WC_Order $order Order.
+	 * @param string   $status sent, failed, or skipped.
+	 * @param string   $note Optional order note.
+	 * @return void
+	 */
+	private static function finish_dealer_notice( WC_Order $order, string $status, string $note ): void {
+		try {
+			$order->update_meta_data( self::DEALER_NOTICE_META, $status );
+			if ( '' !== $note ) {
+				$order->add_order_note( $note );
+			}
+			$order->save();
+		} catch ( Throwable $error ) {
+			self::log_notice_failure( 'ffl_bridge_order_meta_failed' );
+		}
+	}
+
+	/**
+	 * Log a dealer notice failure without shopper data.
+	 *
+	 * @param string $code Error code.
+	 * @return void
+	 */
+	private static function log_notice_failure( string $code ): void {
+		if ( function_exists( 'wc_get_logger' ) ) {
+			wc_get_logger()->log(
+				'warning',
+				'Dealer notice was not sent.',
+				array(
+					'source' => 'ffl-bridge-for-woocommerce',
+					'reason' => $code,
+				)
+			);
+		}
 	}
 
 	/**

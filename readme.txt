@@ -44,7 +44,7 @@ FFL Bridge for WooCommerce adds a transfer dealer step to WooCommerce checkout. 
 * High-Performance Order Storage (HPOS) compatibility
 * The FFL Bridge API key stays on your server and is never sent to the browser
 
-This plugin records dealer details for your fulfillment workflow. It does not change the order's shipping address, create shipping labels, contact dealers, send orders or documents to dealers, arrange transfers, decide which products require a transfer, or guarantee legal compliance.
+This plugin records dealer details for your fulfillment workflow. It does not change the order's shipping address, create shipping labels, contact dealers itself (the optional dealer notice is sent by FFL Bridge), send orders or documents to dealers, arrange transfers, decide which products require a transfer, or guarantee legal compliance.
 
 == External services ==
 
@@ -56,8 +56,9 @@ Data is sent to `https://www.fflbridge.com/api/v1` only in these cases:
 * **Dealer selection and order placement**: the selected dealer's FFL Bridge identifier, to retrieve and re-check the current dealer record.
 * **Connection and coverage test in settings**: the ZIP code and radius entered by the store administrator.
 * **"Mark transfer confirmed" by store staff**: the dealer identifier, license number, order number, an optional staff note, and an optional copy of the dealer license.
+* **Dealer notice, only if the store turns on "Email the selected dealer when an order is placed" (off by default)**: after an order with a verified dealer is placed, the dealer identifier, the shopper's billing name and email address, and the order number, so FFL Bridge can email the dealer. FFL Bridge does not email the shopper.
 
-The plugin does not send shopper names, email addresses, billing or shipping addresses, or payment details to FFL Bridge.
+Unless the store turns on the dealer notice, the plugin does not send shopper names or email addresses to FFL Bridge. It never sends billing or shipping addresses or payment details.
 
 <!-- self-hosted-only:start -->
 Copies downloaded from fflbridge.com, not the copy from WordPress.org, also check `https://fflbridge.com/api/plugins/woocommerce/update` for new versions when WordPress checks for plugin updates (at most every 12 hours, or every hour after a failed check), and download the update package from fflbridge.com when an administrator installs an update. That check sends only the plugin version in its user agent and standard request headers; it sends no API key, store data, or shopper data.

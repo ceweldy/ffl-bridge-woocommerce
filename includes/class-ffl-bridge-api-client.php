@@ -391,6 +391,64 @@ final class FFL_Bridge_API_Client {
 	}
 
 	/**
+	 * Ask FFL Bridge to email the selected dealer about a new order.
+	 *
+	 * Calls POST /api/v1/orders with sendFflEmail true and sendCustomerEmail
+	 * false, because WooCommerce already emails the shopper. Only the allowlisted
+	 * fields below are sent, whatever the caller passes. The request is sent
+	 * once, without retries, with the short GET timeout so checkout never waits
+	 * long. The plugin itself never emails dealers.
+	 *
+	 * @param array<string, mixed> $fields fflId, customerName, customerEmail, externalOrderId.
+	 * @return array<string, mixed>|WP_Error Response data on success.
+	 */
+	public static function create_order( array $fields ): array|WP_Error {
+		$dealer_id = self::plain_text( $fields['fflId'] ?? '' );
+		$name      = self::bounded_text( $fields['customerName'] ?? '', 200 );
+		$email     = self::plain_text( $fields['customerEmail'] ?? '' );
+		$reference = self::bounded_text( $fields['externalOrderId'] ?? '', 100 );
+
+		if ( 1 !== preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i', $dealer_id ) ) {
+			return new WP_Error( 'ffl_bridge_invalid_dealer', __( 'The order has no FFL Bridge dealer identifier.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		if ( '' === $name || '' === $reference || ! is_email( $email ) ) {
+			return new WP_Error( 'ffl_bridge_invalid_order', __( 'The order is missing the details FFL Bridge needs to notify the dealer.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		$body = array(
+			'fflId'             => strtolower( $dealer_id ),
+			'customerName'      => $name,
+			'customerEmail'     => $email,
+			'externalOrderId'   => $reference,
+			'sendFflEmail'      => true,
+			'sendCustomerEmail' => false,
+		);
+
+		$response = self::send( 'POST', '/orders', array(), $body, null, self::TIMEOUT );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		$data   = json_decode( (string) wp_remote_retrieve_body( $response ), true, 16 );
+		if ( $status < 200 || $status >= 300 || ! is_array( $data ) || true !== ( $data['success'] ?? false ) ) {
+			$api_code = 400 <= $status ? self::error_code( $response ) : '';
+			self::log(
+				'warning',
+				'Dealer notice order was not accepted.',
+				array(
+					'status'   => $status,
+					'api_code' => 1 === preg_match( '/\A[A-Z0-9_]{1,64}\z/', $api_code ) ? $api_code : '',
+				)
+			);
+			return new WP_Error( 'ffl_bridge_order_failed', __( 'FFL Bridge did not accept the dealer notice.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		return is_array( $data['data'] ?? null ) ? $data['data'] : array();
+	}
+
+	/**
 	 * Normalize an API dealer object into a strict allowlist.
 	 *
 	 * @param array<string, mixed> $raw Raw API object.
@@ -537,9 +595,10 @@ final class FFL_Bridge_API_Client {
 	 * @param array<string, mixed>       $query Optional query string.
 	 * @param array<string, mixed>       $body Optional JSON body for POST.
 	 * @param array<string, string>|null $raw Optional prebuilt body: content_type and body.
+	 * @param int                        $timeout Optional timeout in seconds. Zero uses the default for the method.
 	 * @return array<string, mixed>|WP_Error Raw HTTP response.
 	 */
-	private static function send( string $method, string $path, array $query = array(), array $body = array(), ?array $raw = null ): array|WP_Error {
+	private static function send( string $method, string $path, array $query = array(), array $body = array(), ?array $raw = null, int $timeout = 0 ): array|WP_Error {
 		$api_key = self::get_api_key();
 		if ( ! self::is_valid_api_key( $api_key ) ) {
 			return new WP_Error( 'ffl_bridge_not_configured', __( 'FFL Bridge is not configured. Ask the store administrator for help.', 'ffl-bridge-for-woocommerce' ) );
@@ -556,7 +615,7 @@ final class FFL_Bridge_API_Client {
 		}
 
 		$args = array(
-			'timeout'             => 'GET' === $method ? self::TIMEOUT : 20,
+			'timeout'             => $timeout > 0 ? $timeout : ( 'GET' === $method ? self::TIMEOUT : 20 ),
 			'redirection'         => 0,
 			'sslverify'           => true,
 			'limit_response_size' => self::MAX_BODY_SIZE,

@@ -21,6 +21,7 @@ delete_option( 'ffl_bridge_dealer_mode' );
 delete_option( 'ffl_bridge_hybrid_offer' );
 delete_option( 'ffl_bridge_license_email' );
 delete_option( 'ffl_bridge_license_fax' );
+delete_option( 'ffl_bridge_send_dealer_email' );
 delete_option( 'ffl_bridge_coverage_log' );
 delete_metadata( 'user', 0, 'ffl_bridge_coverage_dismissed', '', true );
 delete_option( 'ffl_bridge_settings_version' );
