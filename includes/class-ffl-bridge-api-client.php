@@ -12,7 +12,9 @@ defined( 'ABSPATH' ) || exit;
  */
 final class FFL_Bridge_API_Client {
 
-	private const API_BASE_URL  = 'https://www.fflbridge.com/api/v1';
+	public const DEFAULT_API_BASE_URL = 'https://www.fflbridge.com/api/v1';
+	public const API_BASE_URL_OPTION  = 'ffl_bridge_api_base_url';
+
 	private const MAX_BODY_SIZE = 1048576;
 	private const TIMEOUT       = 6;
 	private const CACHE_TTL     = 300;
@@ -44,6 +46,85 @@ final class FFL_Bridge_API_Client {
 
 		$value = get_option( 'ffl_bridge_api_key', '' );
 		return is_string( $value ) ? trim( $value ) : '';
+	}
+
+	/**
+	 * Return the FFL Bridge API base URL, without a trailing slash.
+	 *
+	 * Precedence: a valid FFL_BRIDGE_API_BASE_URL constant, then a valid value
+	 * from the ffl_bridge_api_base_url filter, then a valid saved option, then
+	 * the production default. Every source must be an HTTPS URL; an invalid
+	 * value is skipped in favor of the next source.
+	 *
+	 * @return string
+	 */
+	public static function get_api_base_url(): string {
+		if ( self::api_base_url_from_constant() ) {
+			return self::normalize_api_base_url( constant( 'FFL_BRIDGE_API_BASE_URL' ) );
+		}
+
+		$base = self::normalize_api_base_url( get_option( self::API_BASE_URL_OPTION, '' ) );
+		if ( '' === $base ) {
+			$base = self::DEFAULT_API_BASE_URL;
+		}
+
+		/**
+		 * Filter the FFL Bridge API base URL, for example to point a staging
+		 * site at a preview deployment. Must return an HTTPS URL; any other
+		 * value is ignored. A valid FFL_BRIDGE_API_BASE_URL constant wins.
+		 *
+		 * @param string $base Saved setting or the production default.
+		 */
+		$filtered = self::normalize_api_base_url( apply_filters( 'ffl_bridge_api_base_url', $base ) );
+
+		return '' !== $filtered ? $filtered : $base;
+	}
+
+	/**
+	 * Determine whether a valid FFL_BRIDGE_API_BASE_URL constant is active.
+	 *
+	 * @return bool
+	 */
+	public static function api_base_url_from_constant(): bool {
+		return defined( 'FFL_BRIDGE_API_BASE_URL' ) && '' !== self::normalize_api_base_url( constant( 'FFL_BRIDGE_API_BASE_URL' ) );
+	}
+
+	/**
+	 * Validate and normalize an API base URL.
+	 *
+	 * Accepts only absolute HTTPS URLs with a host, an optional port and an
+	 * optional path. Credentials, query strings, fragments, whitespace and
+	 * control characters are rejected. Trailing slashes are removed.
+	 *
+	 * @param mixed $url Candidate URL.
+	 * @return string Normalized URL, or an empty string when invalid.
+	 */
+	public static function normalize_api_base_url( mixed $url ): string {
+		if ( ! is_string( $url ) ) {
+			return '';
+		}
+
+		$url = trim( $url );
+		if ( '' === $url || strlen( $url ) > 2048 ) {
+			return '';
+		}
+
+		// Scheme, host, optional port, optional path of unreserved characters.
+		if ( 1 !== preg_match( '#\Ahttps://([A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)(?::([0-9]{1,5}))?((?:/[A-Za-z0-9._~%-]*)*)\z#i', $url, $matches ) ) {
+			return '';
+		}
+
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || 'https' !== strtolower( (string) ( $parts['scheme'] ?? '' ) ) || ( $parts['host'] ?? '' ) !== $matches[1]
+			|| isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) ) {
+			return '';
+		}
+
+		if ( isset( $matches[2] ) && '' !== $matches[2] && ( (int) $matches[2] < 1 || (int) $matches[2] > 65535 ) ) {
+			return '';
+		}
+
+		return 'https://' . strtolower( $matches[1] ) . ( isset( $matches[2] ) && '' !== $matches[2] ? ':' . (int) $matches[2] : '' ) . rtrim( $matches[3] ?? '', '/' );
 	}
 
 	/**
@@ -609,7 +690,7 @@ final class FFL_Bridge_API_Client {
 			return $origin;
 		}
 
-		$url = self::API_BASE_URL . $path;
+		$url = self::get_api_base_url() . $path;
 		if ( ! empty( $query ) ) {
 			$url = add_query_arg( $query, $url );
 		}
@@ -630,8 +711,13 @@ final class FFL_Bridge_API_Client {
 
 		if ( 'GET' !== $method ) {
 			$args['headers']['Content-Type'] = null === $raw ? 'application/json' : $raw['content_type'];
-			$args['body']                    = null === $raw ? (string) wp_json_encode( $body ) : $raw['body'];
-			$response                        = wp_safe_remote_post( $url, $args );
+		}
+
+		$args['headers'] = self::merge_extra_headers( $args['headers'], $method, $path );
+
+		if ( 'GET' !== $method ) {
+			$args['body'] = null === $raw ? (string) wp_json_encode( $body ) : $raw['body'];
+			$response     = wp_safe_remote_post( $url, $args );
 			if ( is_wp_error( $response ) ) {
 				self::log( 'warning', 'API transport failure.' );
 				return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ) );
@@ -650,6 +736,57 @@ final class FFL_Bridge_API_Client {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Add optional headers from the ffl_bridge_api_request_headers filter.
+	 *
+	 * Lets a test site send, for example, x-vercel-protection-bypass to a
+	 * protected preview. The filter cannot replace or duplicate a header the
+	 * client sets, nor set transport headers. Names must be HTTP tokens and
+	 * values plain strings without control characters. Values are never
+	 * logged.
+	 *
+	 * @param array<string, string> $headers Client headers.
+	 * @param string                $method HTTP method.
+	 * @param string                $path API path.
+	 * @return array<string, string>
+	 */
+	private static function merge_extra_headers( array $headers, string $method, string $path ): array {
+		/**
+		 * Filter extra headers sent with every FFL Bridge API request.
+		 *
+		 * @param array<string, string> $extra  Header name => value. Empty by default.
+		 * @param string                $method HTTP method.
+		 * @param string                $path   API path, such as /search.
+		 */
+		$extra = apply_filters( 'ffl_bridge_api_request_headers', array(), $method, $path );
+		if ( ! is_array( $extra ) ) {
+			return $headers;
+		}
+
+		$reserved = array( 'host', 'content-length', 'transfer-encoding', 'connection', 'cookie', 'proxy-authorization', 'te', 'upgrade', 'expect' );
+		$taken    = array_merge( $reserved, array_map( 'strtolower', array_keys( $headers ) ) );
+
+		foreach ( $extra as $name => $value ) {
+			if ( ! is_string( $name ) || ! is_string( $value ) ) {
+				continue;
+			}
+
+			if ( 1 !== preg_match( '/\A[A-Za-z0-9!#$%&\'*+.^_`|~-]{1,128}\z/', $name ) || 1 === preg_match( '/[\x00-\x1F\x7F]/', $value ) || strlen( $value ) > 4096 ) {
+				continue;
+			}
+
+			$lower = strtolower( $name );
+			if ( in_array( $lower, $taken, true ) ) {
+				continue;
+			}
+
+			$headers[ $name ] = $value;
+			$taken[]          = $lower;
+		}
+
+		return $headers;
 	}
 
 	/**
