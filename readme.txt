@@ -10,11 +10,19 @@ Stable tag: 1.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Let shoppers choose an FFL transfer dealer at WooCommerce checkout, with confirmed dealers first and license follow-up for the rest.
+Free FFL dealer selection for WooCommerce checkout. Shoppers search by ZIP, pick a licensed dealer, and the dealer is saved on the order.
 
 == Description ==
 
 FFL Bridge for WooCommerce adds a transfer dealer step to WooCommerce checkout. Shoppers search by ZIP code and choose the Federal Firearms Licensee (FFL) that will receive their order. The plugin looks dealers up on the FFL Bridge service from your server, checks the chosen dealer again before the order is created, and saves the dealer on the order for your fulfillment team.
+
+**Free to start**
+
+The plugin is free and GPLv2 licensed. It needs an FFL Bridge account and API key, and both are free on the Free plan: $0 a month, 100 API calls a day, a hard stop at the limit with no overage charges, and no credit card. Paid plans start at $15 a month for 1,000 calls a day. See [pricing](https://www.fflbridge.com/pricing). You do not need your own FFL to use FFL Bridge.
+
+**Before you activate**
+
+Create your free account at [fflbridge.com/signup](https://www.fflbridge.com/signup) first. Until an API key is saved, the dealer step cannot search, and a required selection stops checkout for every product. Set it up on a staging site, or have your key ready before you activate on a live store. The [step by step setup guide](https://www.fflbridge.com/blog/woocommerce-ffl-setup) walks through every screen.
 
 **Hybrid dealer selection (default for new installs)**
 
@@ -74,17 +82,40 @@ Dealer results and status labels support your workflow. They are not legal advic
 
 == Installation ==
 
-1. In WordPress, open Plugins > Add New Plugin, search for "FFL Bridge for WooCommerce", then install and activate it. WooCommerce 10.8 or newer must be active.
-2. Open WooCommerce > FFL Bridge and enter your FFL Bridge server API key (starts with `ffl_live_`). A browser key (starts with `ffl_pub_`) does not work with the plugin. For stronger separation, define `FFL_BRIDGE_API_KEY` in `wp-config.php` instead.
-3. Choose the dealer selection mode, the license copy email and fax, the product categories that need a dealer, and whether a selection is required.
-4. Use the connection and coverage test with a ZIP code your customers use.
-5. Place a test order in a staging site before going live.
+1. Create a free FFL Bridge account at https://www.fflbridge.com/signup. Copy the server API key (it starts with `ffl_live_`) from the page shown right after signup. It is shown only once. A browser key (starts with `ffl_pub_`) does not work with the plugin.
+2. Verify your email with the link FFL Bridge sends. The key does not work until your email is verified.
+3. In WordPress, open Plugins > Add New Plugin, search for "FFL Bridge for WooCommerce", then install and activate it. WooCommerce 10.8 or newer must be active.
+4. Open WooCommerce > FFL Bridge, paste the key into "API key" and save. For stronger separation, define `FFL_BRIDGE_API_KEY` in `wp-config.php` instead.
+5. Under "Applicable product categories", tick every category that ships to a dealer. If none are ticked, every product in the cart needs a dealer.
+6. Check the dealer selection mode (new installs start in Hybrid), whether a selection is required, and the license copy email and fax.
+7. Under "Connection and coverage check", enter a ZIP code your customers use and click "Test connection and coverage". You should see "Connection successful."
+8. Place a test order on a staging site before going live.
 
 == Frequently Asked Questions ==
 
 = Do I need an FFL Bridge account? =
 
 Yes. Dealer search and verification use the FFL Bridge service, which needs an account with a verified email address and a server API key (starts with `ffl_live_`). No domain or site address is needed on the key.
+
+= Is FFL Bridge free? =
+
+Yes. The plugin is free and GPLv2 licensed. The Free plan is $0 a month with 100 API calls a day, stops at that limit instead of charging, and needs no credit card. Paid plans start at $15 a month for 1,000 calls a day.
+
+= Do I need my own FFL? =
+
+No. FFL Bridge is built for online firearms retailers. Your shoppers use it to find a licensed dealer near them.
+
+= Why does checkout say "Dealer selection is unavailable because the store connection is not configured. Contact the store before ordering."? =
+
+No API key is saved yet. Open WooCommerce > FFL Bridge, paste your server key, and save.
+
+= Why is "Test connection and coverage" grayed out, or why does the test report a problem with the key? =
+
+The button works only after a key is saved. If the test says the key was rejected or the connection needs attention, the key is not accepted yet. The most common cause is an email address that has not been verified. The test message says what to fix.
+
+= Why does the dealer step show on accessories? =
+
+No product categories are ticked, so every product needs a dealer. Tick your firearm categories under "Applicable product categories".
 
 = Can shoppers check out when no confirmed dealer is nearby? =
 
