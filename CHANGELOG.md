@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - The readme and README say the plugin needs an account with a verified email and a server API key (starts with `ffl_live_`), and that no domain or site address is needed on that key.
+- The readme has a new short description, a "Free to start" section on the Free plan, a "Before you activate" section that warns a store without a saved API key cannot complete a required dealer selection, installation steps that start with creating the account and verifying the email, and FAQ entries on pricing, whether a store needs its own FFL, the not-configured checkout message, the connection test, and the dealer step on accessories.
 
 ### Added
 
