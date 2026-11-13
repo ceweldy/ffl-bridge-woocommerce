@@ -21,6 +21,9 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 	/** HTTP status the mocked POST /orders answers with; 0 is a transport error. */
 	private int $orders_status = 201;
 
+	/** Transport error message used when $orders_status is 0. */
+	private string $transport_error = 'cURL error 7: Failed to connect to www.fflbridge.com port 443: Connection refused';
+
 	/** @var array<int, int> */
 	private array $posts = array();
 
@@ -81,7 +84,7 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 
 		if ( 'https://www.fflbridge.com/api/v1/orders' === $url ) {
 			return 0 === $this->orders_status
-				? new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' )
+				? new WP_Error( 'http_request_failed', $this->transport_error )
 				: $this->json( $this->orders_status, $this->orders_body() );
 		}
 
@@ -118,7 +121,7 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 		$requests = $this->order_requests();
 		$this->assertCount( 1, $requests );
 		$this->assertSame( 'POST', $requests[0]['args']['method'] );
-		$this->assertSame( 6, (int) $requests[0]['args']['timeout'] );
+		$this->assertSame( 20, (int) $requests[0]['args']['timeout'], 'FFL Bridge sends the dealer email before it answers.' );
 		$this->assertSame(
 			array(
 				'fflId'             => self::DEALER_ID,
@@ -149,6 +152,23 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 		$this->assertCount( 1, $this->order_requests() );
 		$this->assertSame( 'failed', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
 		$this->assertContains( 'FFL Bridge could not email the selected dealer. The order is not affected. Contact the dealer directly if needed.', $this->order_notes( $order ) );
+	}
+
+	public function test_on_checkout_with_a_read_timeout_is_recorded_as_requested(): void {
+		$this->set_option( 'ffl_bridge_send_dealer_email', 'yes' );
+		$this->orders_status   = 0;
+		$this->transport_error = 'cURL error 28: Operation timed out after 20001 milliseconds with 0 bytes received';
+
+		$order = $this->checkout();
+
+		$this->assertCount( 1, $this->order_requests() );
+		$this->assertSame( 'requested', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'no_response', $order->get_meta( '_ffl_bridge_dealer_notice_reason' ) );
+		$this->assertContains( 'FFL Bridge was asked to email the selected dealer but did not answer in time, so delivery could not be confirmed. Contact the dealer directly if needed.', $this->order_notes( $order ) );
+
+		do_action( 'woocommerce_store_api_checkout_order_processed', wc_get_order( $order->get_id() ) );
+		do_action( 'woocommerce_checkout_order_processed', $order->get_id(), array(), wc_get_order( $order->get_id() ) );
+		$this->assertCount( 1, $this->order_requests(), 'A timeout is never retried.' );
 	}
 
 	public function test_on_checkout_with_a_queued_dealer_email_is_not_recorded_as_sent(): void {

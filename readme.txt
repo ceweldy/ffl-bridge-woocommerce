@@ -56,7 +56,7 @@ Data is sent to `https://www.fflbridge.com/api/v1` only in these cases:
 * **Dealer selection and order placement**: the selected dealer's FFL Bridge identifier, to retrieve and re-check the current dealer record.
 * **Connection and coverage test in settings**: the ZIP code and radius entered by the store administrator.
 * **"Mark transfer confirmed" by store staff**: the dealer identifier, license number, order number, an optional staff note, and an optional copy of the dealer license.
-* **Dealer notice, only if the store turns on "Email the selected dealer when an order is placed" (off by default)**: after an order with a verified dealer is placed, the dealer identifier, the shopper's billing name and email address, and the order number, so FFL Bridge can email the dealer. FFL Bridge does not email the shopper. The order shows whether FFL Bridge sent, queued, skipped or failed the dealer email, or "requested" when FFL Bridge could not confirm it.
+* **Dealer notice, only if the store turns on "Email the selected dealer when an order is placed" (off by default)**: after an order with a verified dealer is placed, the dealer identifier, the shopper's billing name and email address, and the order number, so FFL Bridge can email the dealer. FFL Bridge does not email the shopper. The order shows whether FFL Bridge sent, queued, skipped or failed the dealer email, or "requested" when FFL Bridge could not confirm it, including when FFL Bridge did not answer in time.
 
 Unless the store turns on the dealer notice, the plugin does not send shopper names or email addresses to FFL Bridge. It never sends billing or shipping addresses or payment details.
 

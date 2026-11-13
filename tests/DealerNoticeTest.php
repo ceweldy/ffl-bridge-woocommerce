@@ -120,7 +120,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( 'https://www.fflbridge.com/api/v1/orders', $requests[0]['url'] );
 		$this->assertSame( 'Bearer ' . self::KEY, $requests[0]['args']['headers']['Authorization'] );
 		$this->assertSame( 'application/json', $requests[0]['args']['headers']['Content-Type'] );
-		$this->assertLessThanOrEqual( 6, $requests[0]['args']['timeout'] );
+		$this->assertSame( 20, $requests[0]['args']['timeout'], 'FFL Bridge sends the dealer email before it answers.' );
 		$this->assertSame(
 			array(
 				'fflId'             => self::DEALER_ID,
@@ -256,7 +256,10 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 	 */
 	public static function failures(): array {
 		return array(
-			'transport error or timeout' => array( null ),
+			'connection refused'         => array( null ),
+			'dns failure'                => array( array( 'error' => 'cURL error 6: Could not resolve host: www.fflbridge.com' ) ),
+			'connect timeout'            => array( array( 'error' => 'cURL error 28: Connection timed out after 6001 milliseconds' ) ),
+			'tls failure'                => array( array( 'error' => 'cURL error 60: SSL certificate problem' ) ),
 			'400 validation error'       => array( array( 'status' => 400, 'body' => array( 'success' => false, 'error' => array( 'code' => 'VALIDATION_ERROR' ) ) ) ),
 			'401 rejected key'           => array( array( 'status' => 401, 'body' => array( 'success' => false ) ) ),
 			'404 no endpoint'            => array( array( 'status' => 404, 'body' => array( 'success' => false ) ) ),
@@ -266,7 +269,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 	}
 
 	/**
-	 * @param array{status: int, body: array<string, mixed>}|null $failure Queued response, or null for a WP_Error.
+	 * @param array{status?: int, body?: array<string, mixed>, error?: string}|null $failure Queued response, a transport error message, or null for a refused connection.
 	 */
 	#[DataProvider( 'failures' )]
 	public function test_a_failed_notice_is_logged_and_never_fails_checkout( ?array $failure ): void {
@@ -275,8 +278,11 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->select_dealer();
 		FFL_Bridge_Checkout::save_store_api_order( $order );
 
-		$GLOBALS['ffl_bridge_test_http_responses'][] = null === $failure
-			? new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' )
+		if ( null === $failure ) {
+			$failure = array( 'error' => 'cURL error 7: Failed to connect to www.fflbridge.com port 443: Connection refused' );
+		}
+		$GLOBALS['ffl_bridge_test_http_responses'][] = isset( $failure['error'] )
+			? new WP_Error( 'http_request_failed', $failure['error'] )
 			: $this->response( $failure['status'], $failure['body'] );
 		$GLOBALS['ffl_bridge_test_logs'] = array();
 
@@ -521,6 +527,74 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( 'FFL Bridge was asked to email the selected dealer but did not answer in time, so delivery could not be confirmed. Contact the dealer directly if needed.', end( $order->notes ) );
 	}
 
+	/**
+	 * @return array<string, array{0: WP_Error|int}>
+	 */
+	public static function unknown_outcomes(): array {
+		return array(
+			'read timeout'         => array( new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out after 20001 milliseconds with 0 bytes received' ) ),
+			'empty reply'          => array( new WP_Error( 'http_request_failed', 'cURL error 52: Empty reply from server' ) ),
+			'connection reset'     => array( new WP_Error( 'http_request_failed', 'cURL error 56: Recv failure: Connection reset by peer' ) ),
+			'socket transport'     => array( new WP_Error( 'http_request_failed', 'fread(): read timed out' ) ),
+			'504 gateway timeout'  => array( 504 ),
+		);
+	}
+
+	#[DataProvider( 'unknown_outcomes' )]
+	public function test_no_answer_after_the_request_was_sent_records_requested( WP_Error|int $outcome ): void {
+		$order = $this->process_order( $outcome instanceof WP_Error ? $outcome : array( '__status' => $outcome ) );
+
+		$this->assertCount( 1, $this->order_requests(), 'Never retried.' );
+		$this->assertSame( 'requested', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'no_response', $order->get_meta( '_ffl_bridge_dealer_notice_reason' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
+		$this->assertSame( 'FFL Bridge was asked to email the selected dealer but did not answer in time, so delivery could not be confirmed. Contact the dealer directly if needed.', end( $order->notes ) );
+		$this->assertNotSame( array(), $GLOBALS['ffl_bridge_test_logs'] );
+		$this->assertNoShopperData();
+	}
+
+	public function test_refiring_either_hook_after_a_timeout_sends_no_second_post(): void {
+		$order = $this->process_order( null );
+		$this->assertSame( 'requested', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+
+		( new ReflectionProperty( FFL_Bridge_Checkout::class, 'notices_handled' ) )->setValue( null, array() );
+		$GLOBALS['ffl_bridge_test_http_responses'][] = $this->response( 201, $this->order_body() );
+		FFL_Bridge_Checkout::notify_dealer( $order );
+		FFL_Bridge_Checkout::notify_dealer_classic( $order->get_id(), array(), $order );
+
+		$this->assertCount( 1, $this->order_requests() );
+		$this->assertSame( 'requested', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+	}
+
+	public function test_the_in_progress_marker_is_saved_before_the_post(): void {
+		$GLOBALS['ffl_bridge_test_options'][ self::OPTION ] = 'yes';
+		$order = new class( array( '_ffl_bridge_dealer_id' => self::DEALER_ID, '_ffl_bridge_dealer_notice' => 'pending' ) ) extends WC_Order {
+			/** @var array<int, string> */
+			public array $saved_statuses = array();
+
+			public function save(): void {
+				$this->saved_statuses[] = (string) $this->get_meta( '_ffl_bridge_dealer_notice' );
+				parent::save();
+			}
+		};
+		$order->billing = array( 'first_name' => 'Pat', 'last_name' => 'Shopper', 'email' => 'pat@example.test' );
+
+		$GLOBALS['ffl_bridge_test_http_responses'][] = $this->response( 201, $this->order_body( array( 'status' => 'sent' ) ) );
+		FFL_Bridge_Checkout::notify_dealer( $order );
+
+		$this->assertSame( array( 'sending', 'sent' ), $order->saved_statuses );
+	}
+
+	public function test_an_order_left_sending_by_a_request_that_died_is_never_posted_again(): void {
+		$GLOBALS['ffl_bridge_test_options'][ self::OPTION ] = 'yes';
+		$order = $this->shopper_order( array( '_ffl_bridge_dealer_id' => self::DEALER_ID, '_ffl_bridge_dealer_notice' => 'sending' ) );
+
+		FFL_Bridge_Checkout::notify_dealer( $order );
+		FFL_Bridge_Checkout::notify_dealer_classic( $order->get_id(), array(), $order );
+
+		$this->assertNoOrderRequest();
+	}
+
 	public function test_a_failed_request_keeps_the_request_failure_note(): void {
 		$order = $this->process_order( new WP_Error( 'http_request_failed', 'cURL error 7: Failed to connect to www.fflbridge.com port 443: Connection refused' ) );
 
@@ -588,7 +662,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		if ( null === $body ) {
 			$body = new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' );
 		}
-		$GLOBALS['ffl_bridge_test_http_responses'][] = $body instanceof WP_Error ? $body : $this->response( 201, $body );
+		$GLOBALS['ffl_bridge_test_http_responses'][] = $body instanceof WP_Error ? $body : $this->response( (int) ( $body['__status'] ?? 201 ), $body );
 		$GLOBALS['ffl_bridge_test_logs'] = array();
 		FFL_Bridge_Checkout::notify_dealer( $order );
 

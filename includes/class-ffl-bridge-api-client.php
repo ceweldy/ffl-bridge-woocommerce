@@ -17,6 +17,12 @@ final class FFL_Bridge_API_Client {
 
 	private const MAX_BODY_SIZE = 1048576;
 	private const TIMEOUT       = 6;
+
+	/**
+	 * Seconds to wait for POST /orders. FFL Bridge sends the dealer email
+	 * inside that request, which alone can take several seconds.
+	 */
+	private const ORDER_TIMEOUT = 20;
 	private const CACHE_TTL     = 300;
 
 	public const ALLOWED_RADII = array( 10, 25, 50, 100 );
@@ -477,8 +483,12 @@ final class FFL_Bridge_API_Client {
 	 * Calls POST /api/v1/orders with sendFflEmail true and sendCustomerEmail
 	 * false, because WooCommerce already emails the shopper. Only the allowlisted
 	 * fields below are sent, whatever the caller passes. The request is sent
-	 * once, without retries, with the short GET timeout so checkout never waits
-	 * long. The plugin itself never emails dealers.
+	 * once, without retries, with a 20 second timeout because FFL Bridge sends
+	 * the dealer email before it answers. The plugin itself never emails dealers.
+	 *
+	 * A timeout or dropped connection after the request was sent, or a 504,
+	 * leaves the outcome unknown: the email may have gone out. That is
+	 * reported as requested with reason no_response, never failed or sent.
 	 *
 	 * A 2xx with success true only means FFL Bridge created the order. Whether
 	 * the dealer email went out is read from the top-level dealerNotice field,
@@ -511,13 +521,20 @@ final class FFL_Bridge_API_Client {
 			'sendCustomerEmail' => false,
 		);
 
-		$response = self::send( 'POST', '/orders', array(), $body, null, self::TIMEOUT );
+		$response = self::send( 'POST', '/orders', array(), $body, null, self::ORDER_TIMEOUT );
 		if ( is_wp_error( $response ) ) {
+			$error_data = $response->get_error_data();
+			if ( is_array( $error_data ) && 'unknown' === ( $error_data['outcome'] ?? '' ) ) {
+				return self::unknown_notice_result();
+			}
 			return $response;
 		}
 
 		$status = (int) wp_remote_retrieve_response_code( $response );
-		$data   = json_decode( (string) wp_remote_retrieve_body( $response ), true, 16 );
+		if ( 504 === $status ) {
+			return self::unknown_notice_result();
+		}
+		$data = json_decode( (string) wp_remote_retrieve_body( $response ), true, 16 );
 		if ( $status < 200 || $status >= 300 || ! is_array( $data ) || true !== ( $data['success'] ?? false ) ) {
 			$api_code = 400 <= $status ? self::error_code( $response ) : '';
 			self::log(
@@ -544,6 +561,52 @@ final class FFL_Bridge_API_Client {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * The result for a POST /orders that may have reached FFL Bridge but got
+	 * no answer, so the dealer email may or may not have been sent.
+	 *
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string}
+	 */
+	private static function unknown_notice_result(): array {
+		self::log( 'warning', 'Dealer notice outcome is unknown: FFL Bridge did not answer in time.', array( 'notice_status' => 'requested' ) );
+
+		return array(
+			'order_number'  => '',
+			'notice_status' => 'requested',
+			'reason'        => 'no_response',
+			'log_id'        => '',
+		);
+	}
+
+	/**
+	 * Decide whether a failed POST may still have reached FFL Bridge.
+	 *
+	 * Only errors that happen before the request is sent (bad URL, DNS,
+	 * refused or timed-out connection, TLS) mean it never arrived. A read
+	 * timeout or a dropped connection afterward leaves the outcome unknown.
+	 *
+	 * @param WP_Error $error Transport error from the HTTP API.
+	 * @return bool
+	 */
+	private static function request_may_have_arrived( WP_Error $error ): bool {
+		if ( 'http_request_failed' !== $error->get_error_code() ) {
+			return false;
+		}
+
+		$message = $error->get_error_message();
+		if ( 1 === preg_match( '/cURL error (?:3|5|6|7|35|51|53|54|58|59|60|64|66|77|80|82|83|90|91)\b/', $message ) ) {
+			return false;
+		}
+
+		foreach ( array( 'Connection timed out', 'Resolving timed out', 'Could not resolve', 'Failed to connect', 'Connection refused', 'A valid URL was not provided', 'User has blocked requests' ) as $before_send ) {
+			if ( false !== stripos( $message, $before_send ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -793,8 +856,9 @@ final class FFL_Bridge_API_Client {
 			$args['body'] = null === $raw ? (string) wp_json_encode( $body ) : $raw['body'];
 			$response     = wp_safe_remote_post( $url, $args );
 			if ( is_wp_error( $response ) ) {
-				self::log( 'warning', 'API transport failure.' );
-				return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ) );
+				$outcome = self::request_may_have_arrived( $response ) ? 'unknown' : 'not_sent';
+				self::log( 'warning', 'API transport failure.', array( 'outcome' => $outcome ) );
+				return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ), array( 'outcome' => $outcome ) );
 			}
 			return $response;
 		}

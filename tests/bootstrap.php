@@ -36,10 +36,14 @@ class WP_Error {
 	/** @var array<string, string> */
 	private array $errors = array();
 
-	public function __construct( string $code = '', string $message = '' ) {
+	public function __construct( string $code = '', string $message = '', private mixed $data = '' ) {
 		if ( '' !== $code ) {
 			$this->errors[ $code ] = $message;
 		}
+	}
+
+	public function get_error_data(): mixed {
+		return $this->data;
 	}
 
 	public function get_error_code(): string {

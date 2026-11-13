@@ -31,8 +31,9 @@ final class FFL_Bridge_Checkout {
 
 	/**
 	 * Order meta that tracks the dealer notice. pending is the internal marker
-	 * set at checkout before FFL Bridge is called; after the call it is sent,
-	 * queued, failed, skipped, or requested (asked, but delivery not confirmed).
+	 * set at checkout, and sending is saved just before FFL Bridge is called;
+	 * after the call it is sent, queued, failed, skipped, or requested (asked,
+	 * but delivery not confirmed, including when FFL Bridge did not answer).
 	 */
 	private const DEALER_NOTICE_META = '_ffl_bridge_dealer_notice';
 
@@ -809,6 +810,11 @@ final class FFL_Bridge_Checkout {
 				return;
 			}
 
+			// Saved before the call, so a hook fired again later, even after this
+			// request died mid-call, never posts a second FFL Bridge order.
+			$order->update_meta_data( self::DEALER_NOTICE_META, 'sending' );
+			$order->save();
+
 			$result = FFL_Bridge_API_Client::create_order(
 				array(
 					'fflId'           => $dealer_id,
@@ -876,6 +882,9 @@ final class FFL_Bridge_Checkout {
 					$reasons[ $reason ] ?? __( 'it was skipped', 'ffl-bridge-for-woocommerce' )
 				);
 			default:
+				if ( 'no_response' === $reason ) {
+					return __( 'FFL Bridge was asked to email the selected dealer but did not answer in time, so delivery could not be confirmed. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' );
+				}
 				if ( 'already_sent' === $reason ) {
 					return __( 'FFL Bridge reports this dealer was already emailed for this order; delivery was not confirmed.', 'ffl-bridge-for-woocommerce' );
 				}
