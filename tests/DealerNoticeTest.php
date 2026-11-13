@@ -511,8 +511,18 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( 'pending', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
 	}
 
+	public function test_a_timeout_on_order_create_records_requested_not_failed(): void {
+		// The API sends the dealer email inside POST /orders, so a read timeout
+		// can come after the email went out: the outcome is unknown.
+		$order = $this->process_order( new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out after 6001 milliseconds with 0 bytes received' ) );
+
+		$this->assertCount( 1, $this->order_requests() );
+		$this->assertSame( 'requested', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'FFL Bridge was asked to email the selected dealer but did not answer in time, so delivery could not be confirmed. Contact the dealer directly if needed.', end( $order->notes ) );
+	}
+
 	public function test_a_failed_request_keeps_the_request_failure_note(): void {
-		$order = $this->process_order( null );
+		$order = $this->process_order( new WP_Error( 'http_request_failed', 'cURL error 7: Failed to connect to www.fflbridge.com port 443: Connection refused' ) );
 
 		$this->assertSame( 'failed', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
 		$this->assertSame( 'FFL Bridge could not be asked to email the dealer. The order is not affected. Contact the dealer directly if needed.', end( $order->notes ) );
@@ -567,17 +577,18 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 	/**
 	 * Place an on-checkout order with a dealer and answer POST /orders.
 	 *
-	 * @param array<string, mixed>|null $body Response body for a 201, or null for a transport error.
+	 * @param array<string, mixed>|WP_Error|null $body Response body for a 201, a transport error, or null for a read timeout.
 	 */
-	private function process_order( ?array $body ): WC_Order {
+	private function process_order( array|WP_Error|null $body ): WC_Order {
 		$GLOBALS['ffl_bridge_test_options'][ self::OPTION ] = 'yes';
 		$order = $this->shopper_order();
 		$this->select_dealer();
 		FFL_Bridge_Checkout::save_store_api_order( $order );
 
-		$GLOBALS['ffl_bridge_test_http_responses'][] = null === $body
-			? new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' )
-			: $this->response( 201, $body );
+		if ( null === $body ) {
+			$body = new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' );
+		}
+		$GLOBALS['ffl_bridge_test_http_responses'][] = $body instanceof WP_Error ? $body : $this->response( 201, $body );
 		$GLOBALS['ffl_bridge_test_logs'] = array();
 		FFL_Bridge_Checkout::notify_dealer( $order );
 
