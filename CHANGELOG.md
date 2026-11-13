@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- The dealer notice is recorded as sent only when FFL Bridge confirms it. The order shows whether FFL Bridge sent, queued, skipped or failed the dealer email, or "requested" when FFL Bridge could not confirm it. Before, any accepted order was recorded as sent, even when FFL Bridge reported that the dealer email failed.
 - The admin connection test says why FFL Bridge rejected the request: an invalid or revoked key (which also covers an unverified account on the current API), an unverified account email, a server key with an allowed-domain list that leaves out this site, a key that is not allowed to search, the rate limit, or a server that cannot reach www.fflbridge.com. Shoppers see one short message instead of account details, and the specific reason is written to the WooCommerce log.
 - Checkout Block and Store API orders without a required dealer fail with HTTP 400 `ffl_bridge_selection_required` and the message "Select and verify a transfer dealer before placing the order." instead of a 500 `woocommerce_rest_unknown_server_error`.
 - A selected product category also covers its child categories, so a product in Firearms > Rifles uses the dealer workflow when only Firearms is selected.

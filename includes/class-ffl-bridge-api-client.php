@@ -480,8 +480,13 @@ final class FFL_Bridge_API_Client {
 	 * once, without retries, with the short GET timeout so checkout never waits
 	 * long. The plugin itself never emails dealers.
 	 *
+	 * A 2xx with success true only means FFL Bridge created the order. Whether
+	 * the dealer email went out is read from the top-level dealerNotice field,
+	 * or, from APIs that do not send it yet, from emails.fflEmail. The notice is
+	 * reported as sent only when dealerNotice.status is sent.
+	 *
 	 * @param array<string, mixed> $fields fflId, customerName, customerEmail, externalOrderId.
-	 * @return array<string, mixed>|WP_Error Response data on success.
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string}|WP_Error
 	 */
 	public static function create_order( array $fields ): array|WP_Error {
 		$dealer_id = self::plain_text( $fields['fflId'] ?? '' );
@@ -526,7 +531,76 @@ final class FFL_Bridge_API_Client {
 			return new WP_Error( 'ffl_bridge_order_failed', __( 'FFL Bridge did not accept the dealer notice.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		return is_array( $data['data'] ?? null ) ? $data['data'] : array();
+		$result = self::dealer_notice_result( $data );
+		if ( in_array( $result['notice_status'], array( 'failed', 'queued' ), true ) ) {
+			self::log(
+				'warning',
+				'Dealer notice was not confirmed as sent.',
+				array(
+					'notice_status' => $result['notice_status'],
+					'reason'        => $result['reason'],
+				)
+			);
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Read the dealer email outcome from an accepted POST /orders body.
+	 *
+	 * Only validated codes and identifiers are kept; shopper data and free
+	 * API text are never returned.
+	 *
+	 * @param array<string, mixed> $data Decoded response body.
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string}
+	 */
+	private static function dealer_notice_result( array $data ): array {
+		$order        = is_array( $data['order'] ?? null ) ? $data['order'] : array();
+		$order_number = is_string( $order['orderNumber'] ?? null ) && 1 === preg_match( '/\AORD-[A-Z0-9_-]{1,32}\z/', $order['orderNumber'] ) ? $order['orderNumber'] : '';
+
+		$notice = is_array( $data['dealerNotice'] ?? null ) ? $data['dealerNotice'] : null;
+		if ( null !== $notice && in_array( $notice['status'] ?? null, array( 'sent', 'queued', 'failed', 'skipped' ), true ) ) {
+			$status = $notice['status'];
+			$reason = self::notice_code( $notice['reason'] ?? null );
+			$log_id = is_string( $notice['logId'] ?? null ) && 1 === preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i', $notice['logId'] ) ? strtolower( $notice['logId'] ) : '';
+		} else {
+			$emails = is_array( $data['emails'] ?? null ) ? $data['emails'] : array();
+			$email  = is_array( $emails['fflEmail'] ?? null ) ? $emails['fflEmail'] : array();
+			$reason = self::notice_code( $email['reason'] ?? null );
+			$log_id = '';
+			if ( true === ( $email['skipped'] ?? false ) ) {
+				$status = 'skipped';
+			} elseif ( false === ( $email['success'] ?? null ) ) {
+				$status = 'failed';
+			} else {
+				// Older APIs and today's success shape cannot confirm delivery.
+				$status = 'requested';
+				$reason = '';
+			}
+		}
+
+		// A skip because the dealer was already emailed is not a confirmed send.
+		if ( 'skipped' === $status && 'already_sent' === $reason ) {
+			$status = 'requested';
+		}
+
+		return array(
+			'order_number'  => $order_number,
+			'notice_status' => $status,
+			'reason'        => $reason,
+			'log_id'        => $log_id,
+		);
+	}
+
+	/**
+	 * Keep a dealer notice reason only when it is a plain code.
+	 *
+	 * @param mixed $value Raw reason.
+	 * @return string
+	 */
+	private static function notice_code( mixed $value ): string {
+		return is_string( $value ) && 1 === preg_match( '/\A[A-Za-z0-9_]{1,64}\z/', $value ) ? $value : '';
 	}
 
 	/**

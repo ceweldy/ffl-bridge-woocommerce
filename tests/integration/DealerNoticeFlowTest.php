@@ -24,6 +24,13 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 	/** @var array<int, int> */
 	private array $posts = array();
 
+	/**
+	 * Optional dealerNotice field in the mocked 201 body.
+	 *
+	 * @var array<string, mixed>|null
+	 */
+	private ?array $dealer_notice = null;
+
 	protected function setUp(): void {
 		parent::setUp();
 		$this->set_option( 'ffl_bridge_api_key', self::KEY );
@@ -75,7 +82,7 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 		if ( 'https://www.fflbridge.com/api/v1/orders' === $url ) {
 			return 0 === $this->orders_status
 				? new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' )
-				: $this->json( $this->orders_status, array( 'success' => $this->orders_status < 300 ) );
+				: $this->json( $this->orders_status, $this->orders_body() );
 		}
 
 		$this->fail( 'Unexpected HTTP request to ' . $url );
@@ -104,6 +111,7 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 
 	public function test_on_checkout_posts_one_order_for_the_dealer(): void {
 		$this->set_option( 'ffl_bridge_send_dealer_email', 'yes' );
+		$this->dealer_notice = array( 'status' => 'sent', 'reason' => null, 'logId' => '0b6f1f8e-6d0a-4c43-9a43-3f2c1b7d9e10', 'retryable' => false );
 
 		$order = $this->checkout();
 
@@ -123,6 +131,37 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 			json_decode( (string) $requests[0]['args']['body'], true )
 		);
 		$this->assertSame( 'sent', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'ORD-QW7VZYHJQW', $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
+		$this->assertSame( '0b6f1f8e-6d0a-4c43-9a43-3f2c1b7d9e10', $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ) );
+
+		// Re-firing either processed hook never creates a second FFL Bridge order.
+		do_action( 'woocommerce_store_api_checkout_order_processed', wc_get_order( $order->get_id() ) );
+		do_action( 'woocommerce_checkout_order_processed', $order->get_id(), array(), wc_get_order( $order->get_id() ) );
+		$this->assertCount( 1, $this->order_requests() );
+	}
+
+	public function test_on_checkout_with_a_failed_dealer_email_is_recorded_as_failed(): void {
+		$this->set_option( 'ffl_bridge_send_dealer_email', 'yes' );
+		$this->dealer_notice = null;
+
+		$order = $this->checkout();
+
+		$this->assertCount( 1, $this->order_requests() );
+		$this->assertSame( 'failed', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertContains( 'FFL Bridge could not email the selected dealer. The order is not affected. Contact the dealer directly if needed.', $this->order_notes( $order ) );
+	}
+
+	public function test_on_checkout_with_a_queued_dealer_email_is_not_recorded_as_sent(): void {
+		$this->set_option( 'ffl_bridge_send_dealer_email', 'yes' );
+		$this->dealer_notice = array( 'status' => 'queued', 'reason' => 'MAIL_GATEWAY_REVIEW_REQUIRED', 'logId' => null, 'retryable' => false );
+
+		$order = $this->checkout();
+
+		$this->assertSame( 'queued', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'MAIL_GATEWAY_REVIEW_REQUIRED', $order->get_meta( '_ffl_bridge_dealer_notice_reason' ) );
+
+		do_action( 'woocommerce_store_api_checkout_order_processed', wc_get_order( $order->get_id() ) );
+		$this->assertCount( 1, $this->order_requests() );
 	}
 
 	public function test_on_checkout_with_a_failed_notice_still_places_the_order(): void {
@@ -213,6 +252,43 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 				static fn ( array $request ): bool => str_ends_with( $request['url'], '/api/v1/orders' )
 			)
 		);
+	}
+
+	/**
+	 * POST /orders body in the real API shape: no data wrapper, and a failed
+	 * fflEmail unless a dealerNotice is set.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function orders_body(): array {
+		if ( $this->orders_status >= 300 ) {
+			return array( 'success' => false );
+		}
+
+		$body = array(
+			'success' => true,
+			'order'   => array(
+				'orderNumber'     => 'ORD-QW7VZYHJQW',
+				'externalOrderId' => '1',
+			),
+			'ffl'     => array( 'id' => self::DEALER_ID ),
+			'emails'  => array(
+				'customerEmail' => null,
+				'fflEmail'      => array( 'success' => null === $this->dealer_notice ? false : true ),
+			),
+		);
+		if ( null !== $this->dealer_notice ) {
+			$body['dealerNotice'] = $this->dealer_notice;
+		}
+
+		return $body;
+	}
+
+	/**
+	 * @return array<int, string>
+	 */
+	private function order_notes( WC_Order $order ): array {
+		return array_map( static fn ( $note ): string => (string) $note->content, wc_get_order_notes( array( 'order_id' => $order->get_id() ) ) );
 	}
 
 	/** @return array<string, mixed> */

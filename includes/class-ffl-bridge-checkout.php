@@ -30,9 +30,26 @@ final class FFL_Bridge_Checkout {
 	public const DEALER_NOTICE_OPTION = 'ffl_bridge_send_dealer_email';
 
 	/**
-	 * Order meta that tracks the dealer notice: queued, sent, failed, or skipped.
+	 * Order meta that tracks the dealer notice. pending is the internal marker
+	 * set at checkout before FFL Bridge is called; after the call it is sent,
+	 * queued, failed, skipped, or requested (asked, but delivery not confirmed).
 	 */
 	private const DEALER_NOTICE_META = '_ffl_bridge_dealer_notice';
+
+	/**
+	 * Order meta for the validated reason code FFL Bridge gave for the notice.
+	 */
+	private const DEALER_NOTICE_REASON_META = '_ffl_bridge_dealer_notice_reason';
+
+	/**
+	 * Order meta for the FFL Bridge email log ID of the notice.
+	 */
+	private const DEALER_NOTICE_LOG_META = '_ffl_bridge_dealer_notice_log_id';
+
+	/**
+	 * Order meta for the FFL Bridge order number created for the notice.
+	 */
+	private const DEALER_NOTICE_ORDER_META = '_ffl_bridge_dealer_notice_order';
 
 	/**
 	 * Request-local cache of canonical dealer lookups.
@@ -709,10 +726,10 @@ final class FFL_Bridge_Checkout {
 		);
 
 		// The notice is sent later, once the order is saved and has a number.
-		// Nothing is queued, and nothing about the shopper leaves the site,
+		// Nothing is pending, and nothing about the shopper leaves the site,
 		// unless the store turned the dealer notice on.
 		if ( self::dealer_notice_enabled() ) {
-			$meta[ self::DEALER_NOTICE_META ] = 'queued';
+			$meta[ self::DEALER_NOTICE_META ] = 'pending';
 		}
 
 		foreach ( $meta as $key => $value ) {
@@ -732,7 +749,7 @@ final class FFL_Bridge_Checkout {
 	}
 
 	/**
-	 * Classic checkout: send a queued dealer notice after the order is saved.
+	 * Classic checkout: send a pending dealer notice after the order is saved.
 	 *
 	 * @param mixed $order_id Order ID.
 	 * @param mixed $posted_data Posted checkout data.
@@ -750,11 +767,13 @@ final class FFL_Bridge_Checkout {
 	}
 
 	/**
-	 * Send a queued dealer notice through FFL Bridge.
+	 * Send a pending dealer notice through FFL Bridge.
 	 *
 	 * Runs after the order is saved, on both checkouts. Only an order whose
 	 * verified dealer was saved by this plugin at checkout while the setting
-	 * was on is queued, and the notice is sent at most once. It is skipped
+	 * was on is pending, and the notice is sent at most once: any other status,
+	 * including a legacy pre-call queued marker from an older version, or a
+	 * recorded FFL Bridge order number, means it was already handled. It is skipped
 	 * when the setting has since been turned off. A failure is logged and
 	 * noted on the order, and never fails or rolls back the order.
 	 *
@@ -764,7 +783,11 @@ final class FFL_Bridge_Checkout {
 	public static function notify_dealer( WC_Order $order ): void {
 		try {
 			$order_id = (int) $order->get_id();
-			if ( 'queued' !== $order->get_meta( self::DEALER_NOTICE_META ) || ( $order_id > 0 && isset( self::$notices_handled[ $order_id ] ) ) ) {
+			if (
+				'pending' !== $order->get_meta( self::DEALER_NOTICE_META ) ||
+				'' !== (string) $order->get_meta( self::DEALER_NOTICE_ORDER_META ) ||
+				( $order_id > 0 && isset( self::$notices_handled[ $order_id ] ) )
+			) {
 				return;
 			}
 
@@ -804,20 +827,80 @@ final class FFL_Bridge_Checkout {
 			return;
 		}
 
-		self::finish_dealer_notice( $order, 'sent', __( 'FFL Bridge was asked to email the selected dealer about this order.', 'ffl-bridge-for-woocommerce' ) );
+		$status = in_array( $result['notice_status'] ?? '', array( 'sent', 'queued', 'failed', 'skipped', 'requested' ), true ) ? $result['notice_status'] : 'requested';
+		$reason = (string) ( $result['reason'] ?? '' );
+		self::finish_dealer_notice(
+			$order,
+			$status,
+			self::dealer_notice_note( $status, $reason ),
+			array(
+				self::DEALER_NOTICE_REASON_META => $reason,
+				self::DEALER_NOTICE_LOG_META    => (string) ( $result['log_id'] ?? '' ),
+				self::DEALER_NOTICE_ORDER_META  => (string) ( $result['order_number'] ?? '' ),
+			)
+		);
+	}
+
+	/**
+	 * Build the order note for a dealer notice outcome reported by FFL Bridge.
+	 *
+	 * @param string $status sent, queued, failed, skipped, or requested.
+	 * @param string $reason Validated reason code, or empty.
+	 * @return string
+	 */
+	private static function dealer_notice_note( string $status, string $reason ): string {
+		$earlier = 'already_sent' === $reason ? __( ' (already sent for this order earlier)', 'ffl-bridge-for-woocommerce' ) : '';
+
+		switch ( $status ) {
+			case 'sent':
+				return __( 'FFL Bridge emailed the selected dealer about this order.', 'ffl-bridge-for-woocommerce' ) . $earlier;
+			case 'queued':
+				return __( 'FFL Bridge accepted the dealer email but is holding it for review, so it has not been confirmed as sent. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' ) . $earlier;
+			case 'failed':
+				return __( 'FFL Bridge could not email the selected dealer. The order is not affected. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' );
+			case 'skipped':
+				$reasons = array(
+					'email_opted_out'              => __( 'the dealer opted out of these emails', 'ffl-bridge-for-woocommerce' ),
+					'listing_opted_out'            => __( 'the dealer hid its listing', 'ffl-bridge-for-woocommerce' ),
+					'no_email_on_file'             => __( 'no dealer email is on file', 'ffl-bridge-for-woocommerce' ),
+					'email_suppressed'             => __( "the dealer's email address is suppressed", 'ffl-bridge-for-woocommerce' ),
+					'disabled'                     => __( 'dealer emails are turned off at FFL Bridge', 'ffl-bridge-for-woocommerce' ),
+					'company_address_missing'      => __( 'FFL Bridge could not prepare the email', 'ffl-bridge-for-woocommerce' ),
+					'preference_links_unavailable' => __( 'FFL Bridge could not prepare the email', 'ffl-bridge-for-woocommerce' ),
+					'not_requested'                => __( 'the email was not requested', 'ffl-bridge-for-woocommerce' ),
+				);
+
+				return sprintf(
+					/* translators: %s: why FFL Bridge did not email the dealer, for example "no dealer email is on file". */
+					__( 'FFL Bridge did not email the dealer: %s. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' ),
+					$reasons[ $reason ] ?? __( 'it was skipped', 'ffl-bridge-for-woocommerce' )
+				);
+			default:
+				if ( 'already_sent' === $reason ) {
+					return __( 'FFL Bridge reports this dealer was already emailed for this order; delivery was not confirmed.', 'ffl-bridge-for-woocommerce' );
+				}
+
+				return __( 'FFL Bridge was asked to email the selected dealer. Delivery was not confirmed.', 'ffl-bridge-for-woocommerce' );
+		}
 	}
 
 	/**
 	 * Record the dealer notice outcome on the order without ever throwing.
 	 *
-	 * @param WC_Order $order Order.
-	 * @param string   $status sent, failed, or skipped.
-	 * @param string   $note Optional order note.
+	 * @param WC_Order              $order Order.
+	 * @param string                $status sent, queued, failed, skipped, or requested.
+	 * @param string                $note Optional order note.
+	 * @param array<string, string> $extra Optional validated meta; empty values are not stored.
 	 * @return void
 	 */
-	private static function finish_dealer_notice( WC_Order $order, string $status, string $note ): void {
+	private static function finish_dealer_notice( WC_Order $order, string $status, string $note, array $extra = array() ): void {
 		try {
 			$order->update_meta_data( self::DEALER_NOTICE_META, $status );
+			foreach ( $extra as $key => $value ) {
+				if ( '' !== $value ) {
+					$order->update_meta_data( $key, $value );
+				}
+			}
 			if ( '' !== $note ) {
 				$order->add_order_note( $note );
 			}
