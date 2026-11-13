@@ -17,6 +17,12 @@ final class FFL_Bridge_API_Client {
 
 	private const MAX_BODY_SIZE = 1048576;
 	private const TIMEOUT       = 6;
+
+	/**
+	 * Seconds to wait for POST /orders. FFL Bridge sends the dealer email
+	 * inside that request, which alone can take several seconds.
+	 */
+	private const ORDER_TIMEOUT = 20;
 	private const CACHE_TTL     = 300;
 
 	public const ALLOWED_RADII = array( 10, 25, 50, 100 );
@@ -477,11 +483,26 @@ final class FFL_Bridge_API_Client {
 	 * Calls POST /api/v1/orders with sendFflEmail true and sendCustomerEmail
 	 * false, because WooCommerce already emails the shopper. Only the allowlisted
 	 * fields below are sent, whatever the caller passes. The request is sent
-	 * once, without retries, with the short GET timeout so checkout never waits
-	 * long. The plugin itself never emails dealers.
+	 * once, without retries, with a 20 second timeout because FFL Bridge sends
+	 * the dealer email before it answers. The plugin itself never emails dealers.
 	 *
-	 * @param array<string, mixed> $fields fflId, customerName, customerEmail, externalOrderId.
-	 * @return array<string, mixed>|WP_Error Response data on success.
+	 * A timeout or dropped connection after the request was sent, or a 504,
+	 * leaves the outcome unknown: the email may have gone out. That is
+	 * reported as requested with reason no_response, never failed or sent.
+	 *
+	 * A 2xx with success true only means FFL Bridge created the order. Whether
+	 * the dealer email went out is read from the top-level dealerNotice field,
+	 * or, from APIs that do not send it yet, from emails.fflEmail. The notice is
+	 * reported as sent only when dealerNotice.status is sent.
+	 *
+	 * A reason of already_sent is always a skip: this plugin posts once per
+	 * order and never retries, so it means FFL Bridge matched a different
+	 * order with the same number (a reset site, a staging clone, or another
+	 * shop on the same key). orderKey, a hash of the site URL, order ID and
+	 * creation time, lets FFL Bridge tell such orders apart.
+	 *
+	 * @param array<string, mixed> $fields fflId, customerName, customerEmail, externalOrderId, optional orderKey.
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}|WP_Error
 	 */
 	public static function create_order( array $fields ): array|WP_Error {
 		$dealer_id = self::plain_text( $fields['fflId'] ?? '' );
@@ -506,13 +527,25 @@ final class FFL_Bridge_API_Client {
 			'sendCustomerEmail' => false,
 		);
 
-		$response = self::send( 'POST', '/orders', array(), $body, null, self::TIMEOUT );
+		$order_key = $fields['orderKey'] ?? '';
+		if ( is_string( $order_key ) && 1 === preg_match( '/\Awc1-[0-9a-f]{40}\z/', $order_key ) ) {
+			$body['orderKey'] = $order_key;
+		}
+
+		$response = self::send( 'POST', '/orders', array(), $body, null, self::ORDER_TIMEOUT );
 		if ( is_wp_error( $response ) ) {
+			$error_data = $response->get_error_data();
+			if ( is_array( $error_data ) && 'unknown' === ( $error_data['outcome'] ?? '' ) ) {
+				return self::unknown_notice_result();
+			}
 			return $response;
 		}
 
 		$status = (int) wp_remote_retrieve_response_code( $response );
-		$data   = json_decode( (string) wp_remote_retrieve_body( $response ), true, 16 );
+		if ( 504 === $status ) {
+			return self::unknown_notice_result();
+		}
+		$data = json_decode( (string) wp_remote_retrieve_body( $response ), true, 16 );
 		if ( $status < 200 || $status >= 300 || ! is_array( $data ) || true !== ( $data['success'] ?? false ) ) {
 			$api_code = 400 <= $status ? self::error_code( $response ) : '';
 			self::log(
@@ -526,7 +559,142 @@ final class FFL_Bridge_API_Client {
 			return new WP_Error( 'ffl_bridge_order_failed', __( 'FFL Bridge did not accept the dealer notice.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		return is_array( $data['data'] ?? null ) ? $data['data'] : array();
+		$result = self::dealer_notice_result( $data );
+		if ( in_array( $result['notice_status'], array( 'failed', 'queued' ), true ) ) {
+			self::log(
+				'warning',
+				'Dealer notice was not confirmed as sent.',
+				array(
+					'notice_status' => $result['notice_status'],
+					'reason'        => $result['reason'],
+				)
+			);
+		}
+
+		return $result;
+	}
+
+	/**
+	 * The result for a POST /orders that may have reached FFL Bridge but got
+	 * no answer, so the dealer email may or may not have been sent.
+	 *
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}
+	 */
+	private static function unknown_notice_result(): array {
+		self::log( 'warning', 'Dealer notice outcome is unknown: FFL Bridge did not answer in time.', array( 'notice_status' => 'requested' ) );
+
+		return array(
+			'order_number'          => '',
+			'notice_status'         => 'requested',
+			'reason'                => 'no_response',
+			'log_id'                => '',
+			'existing_order_number' => '',
+		);
+	}
+
+	/**
+	 * Decide whether a failed POST may still have reached FFL Bridge.
+	 *
+	 * Only errors that happen before the request is sent (bad URL, DNS,
+	 * refused or timed-out connection, TLS) mean it never arrived. A read
+	 * timeout or a dropped connection afterward leaves the outcome unknown.
+	 *
+	 * @param WP_Error $error Transport error from the HTTP API.
+	 * @return bool
+	 */
+	private static function request_may_have_arrived( WP_Error $error ): bool {
+		if ( 'http_request_failed' !== $error->get_error_code() ) {
+			return false;
+		}
+
+		$message = $error->get_error_message();
+		if ( 1 === preg_match( '/cURL error (?:3|5|6|7|35|51|53|54|58|59|60|64|66|77|80|82|83|90|91)\b/', $message ) ) {
+			return false;
+		}
+
+		foreach ( array( 'Connection timed out', 'Resolving timed out', 'Could not resolve', 'Failed to connect', 'Connection refused', 'A valid URL was not provided', 'User has blocked requests' ) as $before_send ) {
+			if ( false !== stripos( $message, $before_send ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Read the dealer email outcome from an accepted POST /orders body.
+	 *
+	 * Only validated codes and identifiers are kept; shopper data and free
+	 * API text are never returned.
+	 *
+	 * @param array<string, mixed> $data Decoded response body.
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}
+	 */
+	private static function dealer_notice_result( array $data ): array {
+		$order        = is_array( $data['order'] ?? null ) ? $data['order'] : array();
+		$order_number = self::ffl_order_number( $order['orderNumber'] ?? null );
+		$existing     = '';
+
+		$notice = is_array( $data['dealerNotice'] ?? null ) ? $data['dealerNotice'] : null;
+		if ( null !== $notice && in_array( $notice['status'] ?? null, array( 'sent', 'queued', 'failed', 'skipped' ), true ) ) {
+			$status   = $notice['status'];
+			$reason   = self::notice_code( $notice['reason'] ?? null );
+			$log_id   = is_string( $notice['logId'] ?? null ) && 1 === preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i', $notice['logId'] ) ? strtolower( $notice['logId'] ) : '';
+			$existing = self::ffl_order_number( $notice['existingOrderNumber'] ?? null );
+		} else {
+			$emails = is_array( $data['emails'] ?? null ) ? $data['emails'] : array();
+			$email  = is_array( $emails['fflEmail'] ?? null ) ? $emails['fflEmail'] : array();
+			$reason = self::notice_code( $email['reason'] ?? null );
+			$log_id = '';
+			if ( true === ( $email['skipped'] ?? false ) ) {
+				$status = 'skipped';
+			} elseif ( false === ( $email['success'] ?? null ) ) {
+				$status = 'failed';
+			} else {
+				// Older APIs and today's success shape cannot confirm delivery.
+				$status = 'requested';
+				$reason = '';
+			}
+		}
+
+		// This plugin never retries, so already_sent means FFL Bridge matched a
+		// different order with the same number and emailed nobody for this one.
+		// Whatever the status says, it is a skip, and the log ID belongs to the
+		// other order.
+		if ( 'already_sent' === $reason ) {
+			$status = 'skipped';
+			$log_id = '';
+		} else {
+			$existing = '';
+		}
+
+		return array(
+			'order_number'          => $order_number,
+			'notice_status'         => $status,
+			'reason'                => $reason,
+			'log_id'                => $log_id,
+			'existing_order_number' => $existing,
+		);
+	}
+
+	/**
+	 * Keep an FFL Bridge order number only when it has the expected format.
+	 *
+	 * @param mixed $value Raw order number.
+	 * @return string
+	 */
+	private static function ffl_order_number( mixed $value ): string {
+		return is_string( $value ) && 1 === preg_match( '/\AORD-[A-Z0-9_-]{1,32}\z/', $value ) ? $value : '';
+	}
+
+	/**
+	 * Keep a dealer notice reason only when it is a plain code.
+	 *
+	 * @param mixed $value Raw reason.
+	 * @return string
+	 */
+	private static function notice_code( mixed $value ): string {
+		return is_string( $value ) && 1 === preg_match( '/\A[A-Za-z0-9_]{1,64}\z/', $value ) ? $value : '';
 	}
 
 	/**
@@ -719,8 +887,9 @@ final class FFL_Bridge_API_Client {
 			$args['body'] = null === $raw ? (string) wp_json_encode( $body ) : $raw['body'];
 			$response     = wp_safe_remote_post( $url, $args );
 			if ( is_wp_error( $response ) ) {
-				self::log( 'warning', 'API transport failure.' );
-				return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ) );
+				$outcome = self::request_may_have_arrived( $response ) ? 'unknown' : 'not_sent';
+				self::log( 'warning', 'API transport failure.', array( 'outcome' => $outcome ) );
+				return new WP_Error( 'ffl_bridge_api_unavailable', __( 'FFL Bridge is temporarily unavailable. Try again shortly.', 'ffl-bridge-for-woocommerce' ), array( 'outcome' => $outcome ) );
 			}
 			return $response;
 		}

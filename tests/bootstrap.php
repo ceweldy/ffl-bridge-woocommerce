@@ -36,10 +36,14 @@ class WP_Error {
 	/** @var array<string, string> */
 	private array $errors = array();
 
-	public function __construct( string $code = '', string $message = '' ) {
+	public function __construct( string $code = '', string $message = '', private mixed $data = '' ) {
 		if ( '' !== $code ) {
 			$this->errors[ $code ] = $message;
 		}
+	}
+
+	public function get_error_data(): mixed {
+		return $this->data;
 	}
 
 	public function get_error_code(): string {
@@ -58,6 +62,9 @@ class WC_Order {
 
 	public int $saves = 0;
 
+	/** GMT creation time, or null for an order without one. */
+	public ?string $date_created = '2026-11-13T12:00:00+00:00';
+
 	/** @var array<string, string> Billing fields: first_name, last_name, email, phone. */
 	public array $billing = array();
 
@@ -70,6 +77,10 @@ class WC_Order {
 
 	public function get_order_number(): string {
 		return (string) $this->id;
+	}
+
+	public function get_date_created(): ?DateTimeImmutable {
+		return null === $this->date_created ? null : new DateTimeImmutable( $this->date_created );
 	}
 
 	public function get_billing_first_name(): string {
