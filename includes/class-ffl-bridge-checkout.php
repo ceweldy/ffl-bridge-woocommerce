@@ -53,6 +53,12 @@ final class FFL_Bridge_Checkout {
 	private const DEALER_NOTICE_ORDER_META = '_ffl_bridge_dealer_notice_order';
 
 	/**
+	 * Order meta for the earlier FFL Bridge order whose notice made FFL Bridge
+	 * skip this one (reason already_sent), when FFL Bridge names it.
+	 */
+	private const DEALER_NOTICE_EARLIER_ORDER_META = '_ffl_bridge_dealer_notice_earlier_order';
+
+	/**
 	 * Request-local cache of canonical dealer lookups.
 	 *
 	 * @var array<string, array<string, mixed>|WP_Error>
@@ -821,6 +827,7 @@ final class FFL_Bridge_Checkout {
 					'customerName'    => $name,
 					'customerEmail'   => $email,
 					'externalOrderId' => $reference,
+					'orderKey'        => self::order_key( $order ),
 				)
 			);
 		} catch ( Throwable $error ) {
@@ -833,18 +840,37 @@ final class FFL_Bridge_Checkout {
 			return;
 		}
 
-		$status = in_array( $result['notice_status'] ?? '', array( 'sent', 'queued', 'failed', 'skipped', 'requested' ), true ) ? $result['notice_status'] : 'requested';
-		$reason = (string) ( $result['reason'] ?? '' );
+		$status  = in_array( $result['notice_status'] ?? '', array( 'sent', 'queued', 'failed', 'skipped', 'requested' ), true ) ? $result['notice_status'] : 'requested';
+		$reason  = (string) ( $result['reason'] ?? '' );
+		$earlier = (string) ( $result['existing_order_number'] ?? '' );
 		self::finish_dealer_notice(
 			$order,
 			$status,
-			self::dealer_notice_note( $status, $reason ),
+			self::dealer_notice_note( $status, $reason, $earlier ),
 			array(
-				self::DEALER_NOTICE_REASON_META => $reason,
-				self::DEALER_NOTICE_LOG_META    => (string) ( $result['log_id'] ?? '' ),
-				self::DEALER_NOTICE_ORDER_META  => (string) ( $result['order_number'] ?? '' ),
+				self::DEALER_NOTICE_REASON_META        => $reason,
+				self::DEALER_NOTICE_LOG_META           => (string) ( $result['log_id'] ?? '' ),
+				self::DEALER_NOTICE_ORDER_META         => (string) ( $result['order_number'] ?? '' ),
+				self::DEALER_NOTICE_EARLIER_ORDER_META => $earlier,
 			)
 		);
+	}
+
+	/**
+	 * Build the per-site, per-order key sent to FFL Bridge with the notice.
+	 *
+	 * A hash of the site's home URL, the order ID and the order's GMT creation
+	 * time, so a staging clone or a reset site that reuses an order number
+	 * gets a different key. It contains no shopper data.
+	 *
+	 * @param WC_Order $order Saved order.
+	 * @return string
+	 */
+	public static function order_key( WC_Order $order ): string {
+		$created = $order->get_date_created();
+		$created = null === $created ? '' : gmdate( 'c', $created->getTimestamp() );
+
+		return 'wc1-' . substr( hash( 'sha256', home_url( '/' ) . '|' . (int) $order->get_id() . '|' . $created ), 0, 40 );
 	}
 
 	/**
@@ -852,19 +878,30 @@ final class FFL_Bridge_Checkout {
 	 *
 	 * @param string $status sent, queued, failed, skipped, or requested.
 	 * @param string $reason Validated reason code, or empty.
+	 * @param string $earlier Validated earlier FFL Bridge order number, or empty.
 	 * @return string
 	 */
-	private static function dealer_notice_note( string $status, string $reason ): string {
-		$earlier = 'already_sent' === $reason ? __( ' (already sent for this order earlier)', 'ffl-bridge-for-woocommerce' ) : '';
-
+	private static function dealer_notice_note( string $status, string $reason, string $earlier = '' ): string {
 		switch ( $status ) {
 			case 'sent':
-				return __( 'FFL Bridge emailed the selected dealer about this order.', 'ffl-bridge-for-woocommerce' ) . $earlier;
+				return __( 'FFL Bridge emailed the selected dealer about this order.', 'ffl-bridge-for-woocommerce' );
 			case 'queued':
-				return __( 'FFL Bridge accepted the dealer email but is holding it for review, so it has not been confirmed as sent. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' ) . $earlier;
+				return __( 'FFL Bridge accepted the dealer email but is holding it for review, so it has not been confirmed as sent. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' );
 			case 'failed':
 				return __( 'FFL Bridge could not email the selected dealer. The order is not affected. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' );
 			case 'skipped':
+				if ( 'already_sent' === $reason ) {
+					if ( '' !== $earlier ) {
+						return sprintf(
+							/* translators: %s: the earlier FFL Bridge order number, for example ORD-1QZKZISGCP. */
+							__( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number (FFL Bridge order %s). Contact the dealer directly if this is a different order.', 'ffl-bridge-for-woocommerce' ),
+							$earlier
+						);
+					}
+
+					return __( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number. Contact the dealer directly if this is a different order.', 'ffl-bridge-for-woocommerce' );
+				}
+
 				$reasons = array(
 					'email_opted_out'              => __( 'the dealer opted out of these emails', 'ffl-bridge-for-woocommerce' ),
 					'listing_opted_out'            => __( 'the dealer hid its listing', 'ffl-bridge-for-woocommerce' ),
@@ -884,9 +921,6 @@ final class FFL_Bridge_Checkout {
 			default:
 				if ( 'no_response' === $reason ) {
 					return __( 'FFL Bridge was asked to email the selected dealer but did not answer in time, so delivery could not be confirmed. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' );
-				}
-				if ( 'already_sent' === $reason ) {
-					return __( 'FFL Bridge reports this dealer was already emailed for this order; delivery was not confirmed.', 'ffl-bridge-for-woocommerce' );
 				}
 
 				return __( 'FFL Bridge was asked to email the selected dealer. Delivery was not confirmed.', 'ffl-bridge-for-woocommerce' );

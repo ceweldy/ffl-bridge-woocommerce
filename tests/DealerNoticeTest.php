@@ -718,15 +718,17 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 				'sendCustomerEmail' => true,
 				'sendFflEmail'      => false,
 				'billingAddress'    => '1 Main Street',
+				'orderKey'          => 'wc1-pat@example.test',
 			)
 		);
 
 		$this->assertSame(
 			array(
-				'order_number'  => self::ORDER_NO,
-				'notice_status' => 'sent',
-				'reason'        => '',
-				'log_id'        => self::LOG_ID,
+				'order_number'          => self::ORDER_NO,
+				'notice_status'         => 'sent',
+				'reason'                => '',
+				'log_id'                => self::LOG_ID,
+				'existing_order_number' => '',
 			),
 			$result
 		);
@@ -735,6 +737,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->assertTrue( $body['sendFflEmail'] );
 		$this->assertFalse( $body['sendCustomerEmail'] );
 		$this->assertArrayNotHasKey( 'billingAddress', $body );
+		$this->assertArrayNotHasKey( 'orderKey', $body, 'An orderKey that is not wc1- plus 40 hex digits is dropped.' );
 	}
 
 	/**

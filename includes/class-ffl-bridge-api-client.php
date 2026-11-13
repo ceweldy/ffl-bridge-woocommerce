@@ -495,8 +495,14 @@ final class FFL_Bridge_API_Client {
 	 * or, from APIs that do not send it yet, from emails.fflEmail. The notice is
 	 * reported as sent only when dealerNotice.status is sent.
 	 *
-	 * @param array<string, mixed> $fields fflId, customerName, customerEmail, externalOrderId.
-	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string}|WP_Error
+	 * A reason of already_sent is always a skip: this plugin posts once per
+	 * order and never retries, so it means FFL Bridge matched a different
+	 * order with the same number (a reset site, a staging clone, or another
+	 * shop on the same key). orderKey, a hash of the site URL, order ID and
+	 * creation time, lets FFL Bridge tell such orders apart.
+	 *
+	 * @param array<string, mixed> $fields fflId, customerName, customerEmail, externalOrderId, optional orderKey.
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}|WP_Error
 	 */
 	public static function create_order( array $fields ): array|WP_Error {
 		$dealer_id = self::plain_text( $fields['fflId'] ?? '' );
@@ -520,6 +526,11 @@ final class FFL_Bridge_API_Client {
 			'sendFflEmail'      => true,
 			'sendCustomerEmail' => false,
 		);
+
+		$order_key = $fields['orderKey'] ?? '';
+		if ( is_string( $order_key ) && 1 === preg_match( '/\Awc1-[0-9a-f]{40}\z/', $order_key ) ) {
+			$body['orderKey'] = $order_key;
+		}
 
 		$response = self::send( 'POST', '/orders', array(), $body, null, self::ORDER_TIMEOUT );
 		if ( is_wp_error( $response ) ) {
@@ -567,16 +578,17 @@ final class FFL_Bridge_API_Client {
 	 * The result for a POST /orders that may have reached FFL Bridge but got
 	 * no answer, so the dealer email may or may not have been sent.
 	 *
-	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string}
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}
 	 */
 	private static function unknown_notice_result(): array {
 		self::log( 'warning', 'Dealer notice outcome is unknown: FFL Bridge did not answer in time.', array( 'notice_status' => 'requested' ) );
 
 		return array(
-			'order_number'  => '',
-			'notice_status' => 'requested',
-			'reason'        => 'no_response',
-			'log_id'        => '',
+			'order_number'          => '',
+			'notice_status'         => 'requested',
+			'reason'                => 'no_response',
+			'log_id'                => '',
+			'existing_order_number' => '',
 		);
 	}
 
@@ -616,17 +628,19 @@ final class FFL_Bridge_API_Client {
 	 * API text are never returned.
 	 *
 	 * @param array<string, mixed> $data Decoded response body.
-	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string}
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}
 	 */
 	private static function dealer_notice_result( array $data ): array {
 		$order        = is_array( $data['order'] ?? null ) ? $data['order'] : array();
-		$order_number = is_string( $order['orderNumber'] ?? null ) && 1 === preg_match( '/\AORD-[A-Z0-9_-]{1,32}\z/', $order['orderNumber'] ) ? $order['orderNumber'] : '';
+		$order_number = self::ffl_order_number( $order['orderNumber'] ?? null );
+		$existing     = '';
 
 		$notice = is_array( $data['dealerNotice'] ?? null ) ? $data['dealerNotice'] : null;
 		if ( null !== $notice && in_array( $notice['status'] ?? null, array( 'sent', 'queued', 'failed', 'skipped' ), true ) ) {
-			$status = $notice['status'];
-			$reason = self::notice_code( $notice['reason'] ?? null );
-			$log_id = is_string( $notice['logId'] ?? null ) && 1 === preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i', $notice['logId'] ) ? strtolower( $notice['logId'] ) : '';
+			$status   = $notice['status'];
+			$reason   = self::notice_code( $notice['reason'] ?? null );
+			$log_id   = is_string( $notice['logId'] ?? null ) && 1 === preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i', $notice['logId'] ) ? strtolower( $notice['logId'] ) : '';
+			$existing = self::ffl_order_number( $notice['existingOrderNumber'] ?? null );
 		} else {
 			$emails = is_array( $data['emails'] ?? null ) ? $data['emails'] : array();
 			$email  = is_array( $emails['fflEmail'] ?? null ) ? $emails['fflEmail'] : array();
@@ -643,17 +657,34 @@ final class FFL_Bridge_API_Client {
 			}
 		}
 
-		// A skip because the dealer was already emailed is not a confirmed send.
-		if ( 'skipped' === $status && 'already_sent' === $reason ) {
-			$status = 'requested';
+		// This plugin never retries, so already_sent means FFL Bridge matched a
+		// different order with the same number and emailed nobody for this one.
+		// Whatever the status says, it is a skip, and the log ID belongs to the
+		// other order.
+		if ( 'already_sent' === $reason ) {
+			$status = 'skipped';
+			$log_id = '';
+		} else {
+			$existing = '';
 		}
 
 		return array(
-			'order_number'  => $order_number,
-			'notice_status' => $status,
-			'reason'        => $reason,
-			'log_id'        => $log_id,
+			'order_number'          => $order_number,
+			'notice_status'         => $status,
+			'reason'                => $reason,
+			'log_id'                => $log_id,
+			'existing_order_number' => $existing,
 		);
+	}
+
+	/**
+	 * Keep an FFL Bridge order number only when it has the expected format.
+	 *
+	 * @param mixed $value Raw order number.
+	 * @return string
+	 */
+	private static function ffl_order_number( mixed $value ): string {
+		return is_string( $value ) && 1 === preg_match( '/\AORD-[A-Z0-9_-]{1,32}\z/', $value ) ? $value : '';
 	}
 
 	/**
