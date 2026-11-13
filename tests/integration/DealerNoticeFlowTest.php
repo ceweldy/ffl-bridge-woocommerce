@@ -21,6 +21,9 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 	/** HTTP status the mocked POST /orders answers with; 0 is a transport error. */
 	private int $orders_status = 201;
 
+	/** FFL Bridge order number in the mocked 201 body. */
+	private string $order_number = 'ORD-QW7VZYHJQW';
+
 	/** Transport error message used when $orders_status is 0. */
 	private string $transport_error = 'cURL error 7: Failed to connect to www.fflbridge.com port 443: Connection refused';
 
@@ -130,9 +133,11 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 				'externalOrderId'   => (string) $order->get_order_number(),
 				'sendFflEmail'      => true,
 				'sendCustomerEmail' => false,
+				'orderKey'          => 'wc1-' . substr( hash( 'sha256', home_url( '/' ) . '|' . $order->get_id() . '|' . gmdate( 'c', $order->get_date_created()->getTimestamp() ) ), 0, 40 ),
 			),
 			json_decode( (string) $requests[0]['args']['body'], true )
 		);
+		$this->assertMatchesRegularExpression( '/\Awc1-[0-9a-f]{40}\z/', json_decode( (string) $requests[0]['args']['body'], true )['orderKey'] );
 		$this->assertSame( 'sent', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
 		$this->assertSame( 'ORD-QW7VZYHJQW', $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
 		$this->assertSame( '0b6f1f8e-6d0a-4c43-9a43-3f2c1b7d9e10', $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ) );
@@ -169,6 +174,39 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 		do_action( 'woocommerce_store_api_checkout_order_processed', wc_get_order( $order->get_id() ) );
 		do_action( 'woocommerce_checkout_order_processed', $order->get_id(), array(), wc_get_order( $order->get_id() ) );
 		$this->assertCount( 1, $this->order_requests(), 'A timeout is never retried.' );
+	}
+
+	public function test_on_checkout_with_a_reused_order_number_is_recorded_as_skipped(): void {
+		// FFL Bridge Support's E2E answer for a fresh site's order whose number
+		// repeated an earlier site's order: no email went out for this order.
+		$this->set_option( 'ffl_bridge_send_dealer_email', 'yes' );
+		$this->order_number  = 'ORD-HQVAPCLLJ1';
+		$this->dealer_notice = array(
+			'status'              => 'sent',
+			'reason'              => 'already_sent',
+			'logId'               => 'e1ce28ea-94e6-4a0e-8021-de0f187cc38b',
+			'retryable'           => false,
+			'existingOrderNumber' => 'ORD-1QZKZISGCP',
+		);
+
+		$order = $this->checkout();
+
+		$this->assertCount( 1, $this->order_requests() );
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'already_sent', $order->get_meta( '_ffl_bridge_dealer_notice_reason' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ) );
+		$this->assertSame( 'ORD-HQVAPCLLJ1', $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
+		$this->assertSame( 'ORD-1QZKZISGCP', $order->get_meta( '_ffl_bridge_dealer_notice_earlier_order' ) );
+		$this->assertContains( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number (FFL Bridge order ORD-1QZKZISGCP). Contact the dealer directly if this is a different order.', $this->order_notes( $order ) );
+
+		$notice_meta = array();
+		foreach ( $order->get_meta_data() as $meta ) {
+			if ( str_starts_with( (string) $meta->key, '_ffl_bridge_dealer_notice' ) ) {
+				$notice_meta[ $meta->key ] = $meta->value;
+			}
+		}
+		$this->assertNotContains( 'sent', $notice_meta );
+		$this->assertStringNotContainsString( 'e1ce28ea', (string) wp_json_encode( $notice_meta ) );
 	}
 
 	public function test_on_checkout_with_a_queued_dealer_email_is_not_recorded_as_sent(): void {
@@ -288,7 +326,7 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 		$body = array(
 			'success' => true,
 			'order'   => array(
-				'orderNumber'     => 'ORD-QW7VZYHJQW',
+				'orderNumber'     => $this->order_number,
 				'externalOrderId' => '1',
 			),
 			'ffl'     => array( 'id' => self::DEALER_ID ),

@@ -129,6 +129,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 				'externalOrderId'   => '501',
 				'sendFflEmail'      => true,
 				'sendCustomerEmail' => false,
+				'orderKey'          => 'wc1-' . substr( hash( 'sha256', 'https://store.example.test/|501|2026-11-13T12:00:00+00:00' ), 0, 40 ),
 			),
 			json_decode( $requests[0]['args']['body'], true )
 		);
@@ -349,9 +350,12 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$log = self::LOG_ID;
 		return array(
 			'sent'                    => array( array( 'status' => 'sent', 'reason' => null, 'logId' => $log, 'retryable' => false ), 'sent', '', $log, 'FFL Bridge emailed the selected dealer about this order.' ),
-			'sent, already sent'      => array( array( 'status' => 'sent', 'reason' => 'already_sent', 'logId' => $log, 'retryable' => false ), 'sent', 'already_sent', $log, 'FFL Bridge emailed the selected dealer about this order. (already sent for this order earlier)' ),
+			// already_sent always means FFL Bridge matched a different order with the
+			// same number (this plugin never retries), so it is a skip, whatever the
+			// status, and the other order's log ID is never stored.
+			'sent, already sent'      => array( array( 'status' => 'sent', 'reason' => 'already_sent', 'logId' => $log, 'retryable' => false ), 'skipped', 'already_sent', '', 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number. Contact the dealer directly if this is a different order.' ),
 			'queued'                  => array( array( 'status' => 'queued', 'reason' => 'MAIL_GATEWAY_REVIEW_REQUIRED', 'logId' => $log, 'retryable' => false ), 'queued', 'MAIL_GATEWAY_REVIEW_REQUIRED', $log, 'FFL Bridge accepted the dealer email but is holding it for review, so it has not been confirmed as sent. Contact the dealer directly if needed.' ),
-			'queued, already sent'    => array( array( 'status' => 'queued', 'reason' => 'already_sent', 'logId' => $log, 'retryable' => false ), 'queued', 'already_sent', $log, 'FFL Bridge accepted the dealer email but is holding it for review, so it has not been confirmed as sent. Contact the dealer directly if needed. (already sent for this order earlier)' ),
+			'queued, already sent'    => array( array( 'status' => 'queued', 'reason' => 'already_sent', 'logId' => $log, 'retryable' => false ), 'skipped', 'already_sent', '', 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number. Contact the dealer directly if this is a different order.' ),
 			'failed'                  => array( array( 'status' => 'failed', 'reason' => 'MAIL_GATEWAY_NOT_CONFIGURED', 'logId' => $log, 'retryable' => true ), 'failed', 'MAIL_GATEWAY_NOT_CONFIGURED', $log, 'FFL Bridge could not email the selected dealer. The order is not affected. Contact the dealer directly if needed.' ),
 			'skipped, opted out'      => array( array( 'status' => 'skipped', 'reason' => 'email_opted_out', 'logId' => null, 'retryable' => false ), 'skipped', 'email_opted_out', '', 'FFL Bridge did not email the dealer: the dealer opted out of these emails. Contact the dealer directly if needed.' ),
 			'skipped, listing hidden' => array( array( 'status' => 'skipped', 'reason' => 'listing_opted_out', 'logId' => null, 'retryable' => false ), 'skipped', 'listing_opted_out', '', 'FFL Bridge did not email the dealer: the dealer hid its listing. Contact the dealer directly if needed.' ),
@@ -362,7 +366,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 			'skipped, no links'       => array( array( 'status' => 'skipped', 'reason' => 'preference_links_unavailable', 'logId' => null, 'retryable' => false ), 'skipped', 'preference_links_unavailable', '', 'FFL Bridge did not email the dealer: FFL Bridge could not prepare the email. Contact the dealer directly if needed.' ),
 			'skipped, not requested'  => array( array( 'status' => 'skipped', 'reason' => 'not_requested', 'logId' => null, 'retryable' => false ), 'skipped', 'not_requested', '', 'FFL Bridge did not email the dealer: the email was not requested. Contact the dealer directly if needed.' ),
 			'skipped, unknown reason' => array( array( 'status' => 'skipped', 'reason' => 'something_new', 'logId' => null, 'retryable' => false ), 'skipped', 'something_new', '', 'FFL Bridge did not email the dealer: it was skipped. Contact the dealer directly if needed.' ),
-			'skipped, already sent'   => array( array( 'status' => 'skipped', 'reason' => 'already_sent', 'logId' => null, 'retryable' => false ), 'requested', 'already_sent', '', 'FFL Bridge reports this dealer was already emailed for this order; delivery was not confirmed.' ),
+			'skipped, already sent'   => array( array( 'status' => 'skipped', 'reason' => 'already_sent', 'logId' => $log, 'retryable' => false ), 'skipped', 'already_sent', '', 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number. Contact the dealer directly if this is a different order.' ),
 		);
 	}
 
@@ -393,7 +397,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		return array(
 			'fflEmail success'       => array( array( 'success' => true, 'order' => $order, 'emails' => array( 'fflEmail' => array( 'success' => true, 'messageId' => 'msg_1' ) ) ), 'requested', '', 'FFL Bridge was asked to email the selected dealer. Delivery was not confirmed.' ),
 			'fflEmail skipped'       => array( array( 'success' => true, 'order' => $order, 'emails' => array( 'fflEmail' => array( 'success' => false, 'skipped' => true, 'reason' => 'no_email_on_file' ) ) ), 'skipped', 'no_email_on_file', 'FFL Bridge did not email the dealer: no dealer email is on file. Contact the dealer directly if needed.' ),
-			'fflEmail already sent'  => array( array( 'success' => true, 'order' => $order, 'emails' => array( 'fflEmail' => array( 'success' => false, 'skipped' => true, 'reason' => 'already_sent' ) ) ), 'requested', 'already_sent', 'FFL Bridge reports this dealer was already emailed for this order; delivery was not confirmed.' ),
+			'fflEmail already sent'  => array( array( 'success' => true, 'order' => $order, 'emails' => array( 'fflEmail' => array( 'success' => false, 'skipped' => true, 'reason' => 'already_sent' ) ) ), 'skipped', 'already_sent', 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number. Contact the dealer directly if this is a different order.' ),
 			'fflEmail failed'        => array( array( 'success' => true, 'order' => $order, 'emails' => array( 'customerEmail' => null, 'fflEmail' => array( 'success' => false ) ) ), 'failed', '', 'FFL Bridge could not email the selected dealer. The order is not affected. Contact the dealer directly if needed.' ),
 			'no emails'              => array( array( 'success' => true, 'order' => $order ), 'requested', '', 'FFL Bridge was asked to email the selected dealer. Delivery was not confirmed.' ),
 			'unknown notice status'  => array( array( 'success' => true, 'order' => $order, 'dealerNotice' => array( 'status' => 'delivered' ) ), 'requested', '', 'FFL Bridge was asked to email the selected dealer. Delivery was not confirmed.' ),
@@ -515,6 +519,91 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		FFL_Bridge_Checkout::save_store_api_order( $order );
 
 		$this->assertSame( 'pending', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+	}
+
+	public function test_already_sent_for_a_reused_order_number_is_skipped_not_sent(): void {
+		// FFL Bridge Support's E2E case: a fresh site's order 12 repeated an
+		// earlier site's order 12. FFL Bridge created a new order but answered
+		// with the earlier order's notice, and no email went out for this one.
+		$body          = $this->order_body(
+			array(
+				'status'              => 'sent',
+				'reason'              => 'already_sent',
+				'logId'               => 'e1ce28ea-94e6-4a0e-8021-de0f187cc38b',
+				'retryable'           => false,
+				'existingOrderNumber' => 'ORD-1QZKZISGCP',
+			)
+		);
+		$body['order'] = array( 'orderNumber' => 'ORD-HQVAPCLLJ1', 'externalOrderId' => '501' );
+
+		$order = $this->process_order( $body );
+
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'already_sent', $order->get_meta( '_ffl_bridge_dealer_notice_reason' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ), "The other order's log ID is never stored." );
+		$this->assertSame( 'ORD-HQVAPCLLJ1', $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
+		$this->assertSame( 'ORD-1QZKZISGCP', $order->get_meta( '_ffl_bridge_dealer_notice_earlier_order' ) );
+		$this->assertSame( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number (FFL Bridge order ORD-1QZKZISGCP). Contact the dealer directly if this is a different order.', end( $order->notes ) );
+		$this->assertStringNotContainsString( 'e1ce28ea', (string) json_encode( $order->all_meta() ) );
+		$this->assertNoShopperData();
+	}
+
+	/**
+	 * @return array<string, array{0: mixed}>
+	 */
+	public static function bad_earlier_orders(): array {
+		return array(
+			'missing'   => array( null ),
+			'lowercase' => array( 'ord-1qzkzisgcp' ),
+			'html'      => array( '<b>ORD-1QZKZISGCP</b>' ),
+			'too long'  => array( 'ORD-' . str_repeat( 'A', 33 ) ),
+			'array'     => array( array( 'ORD-1QZKZISGCP' ) ),
+		);
+	}
+
+	#[DataProvider( 'bad_earlier_orders' )]
+	public function test_already_sent_without_a_valid_earlier_order_uses_the_note_without_a_number( mixed $earlier ): void {
+		$notice = array( 'status' => 'sent', 'reason' => 'already_sent', 'logId' => self::LOG_ID );
+		if ( null !== $earlier ) {
+			$notice['existingOrderNumber'] = $earlier;
+		}
+
+		$order = $this->process_order( $this->order_body( $notice ) );
+
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_earlier_order' ) );
+		$this->assertSame( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number. Contact the dealer directly if this is a different order.', end( $order->notes ) );
+	}
+
+	public function test_order_key_is_a_per_site_per_order_hash_without_shopper_data(): void {
+		$key = $this->posted_order_key( $this->shopper_order() );
+
+		$this->assertMatchesRegularExpression( '/\Awc1-[0-9a-f]{40}\z/', $key );
+		$this->assertSame( $key, $this->posted_order_key( $this->shopper_order() ), 'Stable for one order.' );
+
+		$reset               = $this->shopper_order();
+		$reset->date_created = '2026-11-13T15:30:00+00:00';
+		$this->assertNotSame( $key, $this->posted_order_key( $reset ), 'A reset site reuses the ID with a new creation time.' );
+
+		$home = $GLOBALS['ffl_bridge_test_home_url'];
+		try {
+			$GLOBALS['ffl_bridge_test_home_url'] = 'https://staging.store.example.test/';
+			$this->assertNotSame( $key, $this->posted_order_key( $this->shopper_order() ), 'A staging clone has another home URL.' );
+		} finally {
+			$GLOBALS['ffl_bridge_test_home_url'] = $home;
+		}
+
+		foreach ( array( 'Pat', 'Shopper', 'pat@example.test' ) as $value ) {
+			$this->assertStringNotContainsString( $value, $key );
+		}
+	}
+
+	public function test_order_key_adds_no_other_field_to_the_order_body(): void {
+		$this->posted_order_key( $this->shopper_order() );
+
+		$body = json_decode( $this->order_requests()[0]['args']['body'], true );
+		$this->assertSame( array( 'fflId', 'customerName', 'customerEmail', 'externalOrderId', 'sendFflEmail', 'sendCustomerEmail', 'orderKey' ), array_keys( $body ) );
+		$this->assertSame( '501', $body['externalOrderId'], 'The human order number stays the external reference.' );
 	}
 
 	public function test_a_timeout_on_order_create_records_requested_not_failed(): void {
@@ -667,6 +756,26 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		FFL_Bridge_Checkout::notify_dealer( $order );
 
 		return $order;
+	}
+
+	/**
+	 * Run the dealer notice for an order and return the orderKey it posted.
+	 */
+	private function posted_order_key( WC_Order $order ): string {
+		$GLOBALS['ffl_bridge_test_options'][ self::OPTION ] = 'yes';
+		$order->update_meta_data( '_ffl_bridge_dealer_id', self::DEALER_ID );
+		$order->update_meta_data( '_ffl_bridge_dealer_notice', 'pending' );
+		( new ReflectionProperty( FFL_Bridge_Checkout::class, 'notices_handled' ) )->setValue( null, array() );
+		$GLOBALS['ffl_bridge_test_http_responses'][] = $this->response( 201, $this->order_body() );
+		$before = count( $this->order_requests() );
+
+		FFL_Bridge_Checkout::notify_dealer( $order );
+
+		$requests = $this->order_requests();
+		$this->assertCount( $before + 1, $requests );
+		$body = json_decode( end( $requests )['args']['body'], true );
+
+		return (string) ( $body['orderKey'] ?? '' );
 	}
 
 	/**
