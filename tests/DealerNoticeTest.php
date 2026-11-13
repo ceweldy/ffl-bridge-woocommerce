@@ -135,6 +135,36 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->assertGreaterThan( 0, $order->saves );
 	}
 
+	public function test_real_api_body_with_a_failed_dealer_email_is_recorded_as_failed(): void {
+		$GLOBALS['ffl_bridge_test_options'][ self::OPTION ] = 'yes';
+		$order = $this->shopper_order();
+		$this->select_dealer();
+		FFL_Bridge_Checkout::save_store_api_order( $order );
+
+		// The 201 body observed on the E2E preview: no data wrapper, no
+		// dealerNotice, and an fflEmail that reports a failure.
+		$GLOBALS['ffl_bridge_test_http_responses'][] = $this->response(
+			201,
+			array(
+				'success' => true,
+				'order'   => array(
+					'orderNumber'     => 'ORD-QW7VZYHJQW',
+					'externalOrderId' => '501',
+				),
+				'ffl'     => array( 'id' => self::DEALER_ID ),
+				'emails'  => array(
+					'customerEmail' => null,
+					'fflEmail'      => array( 'success' => false ),
+				),
+			)
+		);
+		FFL_Bridge_Checkout::notify_dealer( $order );
+
+		$this->assertCount( 1, $this->order_requests() );
+		$this->assertSame( 'failed', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'FFL Bridge could not email the selected dealer. The order is not affected. Contact the dealer directly if needed.', end( $order->notes ) );
+	}
+
 	public function test_on_classic_checkout_posts_one_order(): void {
 		$GLOBALS['ffl_bridge_test_options'][ self::OPTION ] = 'yes';
 		$order = $this->shopper_order();
