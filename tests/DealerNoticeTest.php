@@ -521,6 +521,124 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( 'pending', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
 	}
 
+	/**
+	 * Idempotent replays from FFL Bridge PR #149 round 3: a retry with the same
+	 * orderKey gets the same FFL Bridge order back.
+	 *
+	 * @return array<string, array{0: array<string, mixed>, 1: string}>
+	 */
+	public static function replays(): array {
+		$replay = static function ( array $notice, mixed $flag = true ): array {
+			$body = array(
+				'success'      => true,
+				'order'        => array( 'orderNumber' => self::ORDER_NO, 'externalOrderId' => '501' ),
+				'dealerNotice' => array_merge( array( 'status' => 'skipped', 'reason' => 'already_sent', 'logId' => self::LOG_ID, 'retryable' => false ), $notice ),
+			);
+			if ( null !== $flag ) {
+				$body['idempotentReplay'] = $flag;
+			}
+			return $body;
+		};
+
+		return array(
+			'flag, earlier email sent'          => array( $replay( array( 'existingOrderNumber' => self::ORDER_NO, 'existingStatus' => 'sent' ) ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt and had already emailed the dealer about it, so no second email was sent.' ),
+			'flag, earlier email queued'        => array( $replay( array( 'existingOrderNumber' => self::ORDER_NO, 'existingStatus' => 'queued' ) ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt and is still holding that email for review, so no second email was sent.' ),
+			'same order number, no flag'        => array( $replay( array( 'existingOrderNumber' => self::ORDER_NO, 'existingStatus' => 'sent' ), null ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt and had already emailed the dealer about it, so no second email was sent.' ),
+			'same order number, flag false'     => array( $replay( array( 'existingOrderNumber' => self::ORDER_NO, 'existingStatus' => 'queued' ), false ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt and is still holding that email for review, so no second email was sent.' ),
+			'flag, no existingOrderNumber'      => array( $replay( array( 'existingStatus' => 'sent' ) ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt and had already emailed the dealer about it, so no second email was sent.' ),
+			'flag, no existingStatus'           => array( $replay( array( 'existingOrderNumber' => self::ORDER_NO ) ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt, so no second email was sent.' ),
+			'flag, unknown existingStatus'      => array( $replay( array( 'existingOrderNumber' => self::ORDER_NO, 'existingStatus' => 'failed' ) ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt, so no second email was sent.' ),
+			'flag inside dealerNotice'          => array( $replay( array( 'existingOrderNumber' => self::ORDER_NO, 'existingStatus' => 'sent', 'idempotentReplay' => true ), null ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt and had already emailed the dealer about it, so no second email was sent.' ),
+			'HTTP 200 replay'                   => array( array_merge( $replay( array( 'existingOrderNumber' => self::ORDER_NO, 'existingStatus' => 'sent' ) ), array( '__status' => 200 ) ), 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt and had already emailed the dealer about it, so no second email was sent.' ),
+		);
+	}
+
+	/**
+	 * @param array<string, mixed> $body Response body.
+	 */
+	#[DataProvider( 'replays' )]
+	public function test_an_idempotent_replay_keeps_this_orders_log_id_and_says_no_second_email_was_sent( array $body, string $note ): void {
+		$order = $this->process_order( $body );
+
+		$this->assertCount( 1, $this->order_requests() );
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'already_sent', $order->get_meta( '_ffl_bridge_dealer_notice_reason' ) );
+		$this->assertSame( self::LOG_ID, $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ), "The log row is this order's own notice." );
+		$this->assertSame( self::ORDER_NO, $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_earlier_order' ), 'A replay is not an earlier, different order.' );
+		$this->assertSame( 'yes', $order->get_meta( '_ffl_bridge_dealer_notice_replay' ) );
+		$this->assertSame( $note, end( $order->notes ) );
+		$this->assertStringNotContainsString( 'different order', end( $order->notes ) );
+		$this->assertNoShopperData();
+	}
+
+	/**
+	 * @return array<string, array{0: mixed, 1: string}>
+	 */
+	public static function not_replays(): array {
+		return array(
+			'flag is the string true' => array( 'true', 'ORD-1QZKZISGCP' ),
+			'flag is 1'               => array( 1, 'ORD-1QZKZISGCP' ),
+			'no flag, other number'   => array( null, 'ORD-1QZKZISGCP' ),
+		);
+	}
+
+	#[DataProvider( 'not_replays' )]
+	public function test_already_sent_for_a_different_order_is_unchanged_without_a_strict_replay_flag( mixed $flag, string $earlier ): void {
+		$body = $this->order_body( array( 'status' => 'skipped', 'reason' => 'already_sent', 'logId' => self::LOG_ID, 'existingOrderNumber' => $earlier, 'existingStatus' => 'sent' ) );
+		if ( null !== $flag ) {
+			$body['idempotentReplay'] = $flag;
+		}
+
+		$order = $this->process_order( $body );
+
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ) );
+		$this->assertSame( $earlier, $order->get_meta( '_ffl_bridge_dealer_notice_earlier_order' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_replay' ) );
+		$this->assertSame( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number (FFL Bridge order ORD-1QZKZISGCP). Contact the dealer directly if this is a different order.', end( $order->notes ) );
+	}
+
+	/**
+	 * @return array<string, array{0: string, 1: string}>
+	 */
+	public static function logged_opt_outs(): array {
+		return array(
+			'email opted out'   => array( 'email_opted_out', 'FFL Bridge did not email the dealer: the dealer opted out of these emails. Contact the dealer directly if needed.' ),
+			'listing opted out' => array( 'listing_opted_out', 'FFL Bridge did not email the dealer: the dealer hid its listing. Contact the dealer directly if needed.' ),
+		);
+	}
+
+	#[DataProvider( 'logged_opt_outs' )]
+	public function test_an_opt_out_skip_keeps_its_valid_log_id( string $reason, string $note ): void {
+		$order = $this->process_order( $this->order_body( array( 'status' => 'skipped', 'reason' => $reason, 'logId' => strtoupper( self::LOG_ID ), 'retryable' => false ) ) );
+
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( $reason, $order->get_meta( '_ffl_bridge_dealer_notice_reason' ) );
+		$this->assertSame( self::LOG_ID, $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ) );
+		$this->assertSame( $note, end( $order->notes ) );
+	}
+
+	#[DataProvider( 'logged_opt_outs' )]
+	public function test_an_opt_out_skip_drops_a_malformed_log_id( string $reason, string $note ): void {
+		$order = $this->process_order( $this->order_body( array( 'status' => 'skipped', 'reason' => $reason, 'logId' => 'row-1; <script>', 'retryable' => false ) ) );
+
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ) );
+		$this->assertSame( $note, end( $order->notes ) );
+	}
+
+	public function test_an_http_200_order_response_is_accepted(): void {
+		$body             = $this->order_body( array( 'status' => 'sent', 'reason' => null, 'logId' => self::LOG_ID, 'retryable' => false ) );
+		$body['__status'] = 200;
+
+		$order = $this->process_order( $body );
+
+		$this->assertSame( 'sent', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( self::LOG_ID, $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ) );
+		$this->assertSame( 'FFL Bridge emailed the selected dealer about this order.', end( $order->notes ) );
+	}
+
 	public function test_already_sent_for_a_reused_order_number_is_skipped_not_sent(): void {
 		// FFL Bridge Support's E2E case: a fresh site's order 12 repeated an
 		// earlier site's order 12. FFL Bridge created a new order but answered
@@ -543,6 +661,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ), "The other order's log ID is never stored." );
 		$this->assertSame( 'ORD-HQVAPCLLJ1', $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
 		$this->assertSame( 'ORD-1QZKZISGCP', $order->get_meta( '_ffl_bridge_dealer_notice_earlier_order' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_replay' ), 'A different order is not a replay.' );
 		$this->assertSame( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number (FFL Bridge order ORD-1QZKZISGCP). Contact the dealer directly if this is a different order.', end( $order->notes ) );
 		$this->assertStringNotContainsString( 'e1ce28ea', (string) json_encode( $order->all_meta() ) );
 		$this->assertNoShopperData();
