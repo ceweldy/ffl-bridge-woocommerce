@@ -628,6 +628,23 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 		$this->assertSame( $note, end( $order->notes ) );
 	}
 
+	public function test_a_replay_without_a_valid_order_number_uses_the_note_without_a_number(): void {
+		$order = $this->process_order(
+			array(
+				'__status'         => 200,
+				'success'          => true,
+				'idempotentReplay' => true,
+				'order'            => array( 'orderNumber' => '<b>ORD-1</b>' ),
+				'dealerNotice'     => array( 'status' => 'skipped', 'reason' => 'already_sent', 'logId' => self::LOG_ID, 'existingStatus' => 'queued' ),
+			)
+		);
+
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'yes', $order->get_meta( '_ffl_bridge_dealer_notice_replay' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
+		$this->assertSame( 'FFL Bridge already had this order from an earlier attempt and is still holding that email for review, so no second email was sent.', end( $order->notes ) );
+	}
+
 	public function test_an_http_200_order_response_is_accepted(): void {
 		$body             = $this->order_body( array( 'status' => 'sent', 'reason' => null, 'logId' => self::LOG_ID, 'retryable' => false ) );
 		$body['__status'] = 200;
@@ -848,6 +865,8 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 				'reason'                => '',
 				'log_id'                => self::LOG_ID,
 				'existing_order_number' => '',
+				'replay'                => false,
+				'existing_status'       => '',
 			),
 			$result
 		);

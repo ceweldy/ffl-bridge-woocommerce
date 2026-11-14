@@ -21,6 +21,9 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 	/** HTTP status the mocked POST /orders answers with; 0 is a transport error. */
 	private int $orders_status = 201;
 
+	/** Whether the mocked answer is an idempotent replay (HTTP 200). */
+	private bool $replay = false;
+
 	/** FFL Bridge order number in the mocked 201 body. */
 	private string $order_number = 'ORD-QW7VZYHJQW';
 
@@ -88,7 +91,7 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 		if ( 'https://www.fflbridge.com/api/v1/orders' === $url ) {
 			return 0 === $this->orders_status
 				? new WP_Error( 'http_request_failed', $this->transport_error )
-				: $this->json( $this->orders_status, $this->orders_body() );
+				: $this->json( $this->replay ? 200 : $this->orders_status, $this->orders_body() );
 		}
 
 		$this->fail( 'Unexpected HTTP request to ' . $url );
@@ -207,6 +210,32 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 		}
 		$this->assertNotContains( 'sent', $notice_meta );
 		$this->assertStringNotContainsString( 'e1ce28ea', (string) wp_json_encode( $notice_meta ) );
+	}
+
+	public function test_on_checkout_with_an_idempotent_replay_keeps_this_orders_notice(): void {
+		// FFL Bridge PR #149 round 3: a retry with the same orderKey returns 200
+		// with the same FFL Bridge order and its earlier notice.
+		$this->set_option( 'ffl_bridge_send_dealer_email', 'yes' );
+		$this->replay        = true;
+		$this->dealer_notice = array(
+			'status'              => 'skipped',
+			'reason'              => 'already_sent',
+			'logId'               => '0b6f1f8e-6d0a-4c43-9a43-3f2c1b7d9e10',
+			'retryable'           => false,
+			'existingOrderNumber' => 'ORD-QW7VZYHJQW',
+			'existingStatus'      => 'sent',
+		);
+
+		$order = $this->checkout();
+
+		$this->assertCount( 1, $this->order_requests() );
+		$this->assertSame( 'skipped', $order->get_meta( '_ffl_bridge_dealer_notice' ) );
+		$this->assertSame( 'already_sent', $order->get_meta( '_ffl_bridge_dealer_notice_reason' ) );
+		$this->assertSame( '0b6f1f8e-6d0a-4c43-9a43-3f2c1b7d9e10', $order->get_meta( '_ffl_bridge_dealer_notice_log_id' ) );
+		$this->assertSame( 'ORD-QW7VZYHJQW', $order->get_meta( '_ffl_bridge_dealer_notice_order' ) );
+		$this->assertSame( '', $order->get_meta( '_ffl_bridge_dealer_notice_earlier_order' ) );
+		$this->assertSame( 'yes', $order->get_meta( '_ffl_bridge_dealer_notice_replay' ) );
+		$this->assertContains( 'FFL Bridge already had this order (FFL Bridge order ORD-QW7VZYHJQW) from an earlier attempt and had already emailed the dealer about it, so no second email was sent.', $this->order_notes( $order ) );
 	}
 
 	public function test_on_checkout_with_a_queued_dealer_email_is_not_recorded_as_sent(): void {
@@ -337,6 +366,9 @@ final class DealerNoticeFlowTest extends FFL_Bridge_Integration_TestCase {
 		);
 		if ( null !== $this->dealer_notice ) {
 			$body['dealerNotice'] = $this->dealer_notice;
+		}
+		if ( $this->replay ) {
+			$body['idempotentReplay'] = true;
 		}
 
 		return $body;

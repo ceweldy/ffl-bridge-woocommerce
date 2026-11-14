@@ -502,7 +502,7 @@ final class FFL_Bridge_API_Client {
 	 * creation time, lets FFL Bridge tell such orders apart.
 	 *
 	 * @param array<string, mixed> $fields fflId, customerName, customerEmail, externalOrderId, optional orderKey.
-	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}|WP_Error
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string, replay: bool, existing_status: string}|WP_Error
 	 */
 	public static function create_order( array $fields ): array|WP_Error {
 		$dealer_id = self::plain_text( $fields['fflId'] ?? '' );
@@ -578,7 +578,7 @@ final class FFL_Bridge_API_Client {
 	 * The result for a POST /orders that may have reached FFL Bridge but got
 	 * no answer, so the dealer email may or may not have been sent.
 	 *
-	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string, replay: bool, existing_status: string}
 	 */
 	private static function unknown_notice_result(): array {
 		self::log( 'warning', 'Dealer notice outcome is unknown: FFL Bridge did not answer in time.', array( 'notice_status' => 'requested' ) );
@@ -589,6 +589,8 @@ final class FFL_Bridge_API_Client {
 			'reason'                => 'no_response',
 			'log_id'                => '',
 			'existing_order_number' => '',
+			'replay'                => false,
+			'existing_status'       => '',
 		);
 	}
 
@@ -628,12 +630,14 @@ final class FFL_Bridge_API_Client {
 	 * API text are never returned.
 	 *
 	 * @param array<string, mixed> $data Decoded response body.
-	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string}
+	 * @return array{order_number: string, notice_status: string, reason: string, log_id: string, existing_order_number: string, replay: bool, existing_status: string}
 	 */
 	private static function dealer_notice_result( array $data ): array {
-		$order        = is_array( $data['order'] ?? null ) ? $data['order'] : array();
-		$order_number = self::ffl_order_number( $order['orderNumber'] ?? null );
-		$existing     = '';
+		$order           = is_array( $data['order'] ?? null ) ? $data['order'] : array();
+		$order_number    = self::ffl_order_number( $order['orderNumber'] ?? null );
+		$existing        = '';
+		$existing_status = '';
+		$replay          = true === ( $data['idempotentReplay'] ?? null );
 
 		$notice = is_array( $data['dealerNotice'] ?? null ) ? $data['dealerNotice'] : null;
 		if ( null !== $notice && in_array( $notice['status'] ?? null, array( 'sent', 'queued', 'failed', 'skipped' ), true ) ) {
@@ -641,6 +645,10 @@ final class FFL_Bridge_API_Client {
 			$reason   = self::notice_code( $notice['reason'] ?? null );
 			$log_id   = is_string( $notice['logId'] ?? null ) && 1 === preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i', $notice['logId'] ) ? strtolower( $notice['logId'] ) : '';
 			$existing = self::ffl_order_number( $notice['existingOrderNumber'] ?? null );
+			$replay   = $replay || true === ( $notice['idempotentReplay'] ?? null );
+			if ( in_array( $notice['existingStatus'] ?? null, array( 'sent', 'queued' ), true ) ) {
+				$existing_status = $notice['existingStatus'];
+			}
 		} else {
 			$emails = is_array( $data['emails'] ?? null ) ? $data['emails'] : array();
 			$email  = is_array( $emails['fflEmail'] ?? null ) ? $emails['fflEmail'] : array();
@@ -657,15 +665,23 @@ final class FFL_Bridge_API_Client {
 			}
 		}
 
-		// This plugin never retries, so already_sent means FFL Bridge matched a
-		// different order with the same number and emailed nobody for this one.
-		// Whatever the status says, it is a skip, and the log ID belongs to the
-		// other order.
+		// already_sent is always a skip. On an idempotent replay (FFL Bridge
+		// returned this same order for the same orderKey) the log ID is this
+		// order's own notice and there is no earlier, different order. Otherwise
+		// FFL Bridge matched a different order with the same number, emailed
+		// nobody for this one, and the log ID belongs to the other order.
+		$replay = 'already_sent' === $reason && ( $replay || ( '' !== $existing && $existing === $order_number ) );
 		if ( 'already_sent' === $reason ) {
 			$status = 'skipped';
-			$log_id = '';
+			if ( $replay ) {
+				$existing = '';
+			} else {
+				$log_id          = '';
+				$existing_status = '';
+			}
 		} else {
-			$existing = '';
+			$existing        = '';
+			$existing_status = '';
 		}
 
 		return array(
@@ -674,6 +690,8 @@ final class FFL_Bridge_API_Client {
 			'reason'                => $reason,
 			'log_id'                => $log_id,
 			'existing_order_number' => $existing,
+			'replay'                => $replay,
+			'existing_status'       => $existing_status,
 		);
 	}
 

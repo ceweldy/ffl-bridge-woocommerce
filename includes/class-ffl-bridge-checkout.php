@@ -59,6 +59,12 @@ final class FFL_Bridge_Checkout {
 	private const DEALER_NOTICE_EARLIER_ORDER_META = '_ffl_bridge_dealer_notice_earlier_order';
 
 	/**
+	 * Order meta set to yes when FFL Bridge answered an idempotent replay: it
+	 * already had this same order from an earlier attempt.
+	 */
+	private const DEALER_NOTICE_REPLAY_META = '_ffl_bridge_dealer_notice_replay';
+
+	/**
 	 * Request-local cache of canonical dealer lookups.
 	 *
 	 * @var array<string, array<string, mixed>|WP_Error>
@@ -843,17 +849,60 @@ final class FFL_Bridge_Checkout {
 		$status  = in_array( $result['notice_status'] ?? '', array( 'sent', 'queued', 'failed', 'skipped', 'requested' ), true ) ? $result['notice_status'] : 'requested';
 		$reason  = (string) ( $result['reason'] ?? '' );
 		$earlier = (string) ( $result['existing_order_number'] ?? '' );
+		$replay  = true === ( $result['replay'] ?? false );
+		$number  = (string) ( $result['order_number'] ?? '' );
+		$note    = $replay
+			? self::replay_note( $number, (string) ( $result['existing_status'] ?? '' ) )
+			: self::dealer_notice_note( $status, $reason, $earlier );
 		self::finish_dealer_notice(
 			$order,
 			$status,
-			self::dealer_notice_note( $status, $reason, $earlier ),
+			$note,
 			array(
 				self::DEALER_NOTICE_REASON_META        => $reason,
 				self::DEALER_NOTICE_LOG_META           => (string) ( $result['log_id'] ?? '' ),
-				self::DEALER_NOTICE_ORDER_META         => (string) ( $result['order_number'] ?? '' ),
+				self::DEALER_NOTICE_ORDER_META         => $number,
 				self::DEALER_NOTICE_EARLIER_ORDER_META => $earlier,
+				self::DEALER_NOTICE_REPLAY_META        => $replay ? 'yes' : '',
 			)
 		);
+	}
+
+	/**
+	 * Build the order note for an idempotent replay: FFL Bridge already had this
+	 * same order from an earlier attempt, so it sent no second email.
+	 *
+	 * @param string $number Validated FFL Bridge order number, or empty.
+	 * @param string $existing_status sent, queued, or empty when FFL Bridge did not say.
+	 * @return string
+	 */
+	private static function replay_note( string $number, string $existing_status ): string {
+		if ( '' === $number ) {
+			switch ( $existing_status ) {
+				case 'sent':
+					return __( 'FFL Bridge already had this order from an earlier attempt and had already emailed the dealer about it, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+				case 'queued':
+					return __( 'FFL Bridge already had this order from an earlier attempt and is still holding that email for review, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+				default:
+					return __( 'FFL Bridge already had this order from an earlier attempt, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+			}
+		}
+
+		switch ( $existing_status ) {
+			case 'sent':
+				/* translators: %s: the FFL Bridge order number, for example ORD-QW7VZYHJQW. */
+				$text = __( 'FFL Bridge already had this order (FFL Bridge order %s) from an earlier attempt and had already emailed the dealer about it, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+				break;
+			case 'queued':
+				/* translators: %s: the FFL Bridge order number, for example ORD-QW7VZYHJQW. */
+				$text = __( 'FFL Bridge already had this order (FFL Bridge order %s) from an earlier attempt and is still holding that email for review, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+				break;
+			default:
+				/* translators: %s: the FFL Bridge order number, for example ORD-QW7VZYHJQW. */
+				$text = __( 'FFL Bridge already had this order (FFL Bridge order %s) from an earlier attempt, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+		}
+
+		return sprintf( $text, $number );
 	}
 
 	/**
