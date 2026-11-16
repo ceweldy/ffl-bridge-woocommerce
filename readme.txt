@@ -99,7 +99,7 @@ Yes. Dealer search and verification use the FFL Bridge service, which needs an a
 
 = Is FFL Bridge free? =
 
-Yes. The plugin is free and GPLv2 licensed. The Free plan is $0 a month with 100 API calls a day, stops at that limit instead of charging, and needs no credit card. Paid plans start at $15 a month for 1,000 calls a day.
+Yes. You can install the plugin from this listing, and it is free and GPLv2 licensed. The FFL Bridge Free plan is $0 a month with 100 API calls a day, stops at that limit instead of charging, and needs no credit card. Paid plans start at $15 a month for 1,000 calls a day and are listed at [fflbridge.com/pricing](https://www.fflbridge.com/pricing).
 
 = Do I need my own FFL? =
 
@@ -117,6 +117,10 @@ The button works only after a key is saved. If the test says the key was rejecte
 
 No product categories are ticked, so every product needs a dealer. Tick your firearm categories under "Applicable product categories".
 
+= How do I require a dealer only for some products? =
+
+In WooCommerce > FFL Bridge, choose the product categories that need a dealer under "Applicable product categories", and set "Require a selection" to "Yes, block checkout". Other products can check out without a dealer.
+
 = Can shoppers check out when no confirmed dealer is nearby? =
 
 Yes, in hybrid mode. Confirmed dealers are listed first, and nearby ATF-listed dealers are offered with a "License not verified" or "Transfer not confirmed" label. After choosing one, the shopper sees follow-up instructions. In "Confirmed dealers only" mode the shopper sees a message instead, and administrators see a coverage notice.
@@ -132,6 +136,14 @@ Open the order. The dealer panel shows the license number and status. Click "Mar
 = Does the plugin support the Checkout Block? =
 
 Yes. Both classic checkout and the WooCommerce Checkout Block are supported.
+
+= Does the plugin replace WooCommerce checkout? =
+
+No. It adds a dealer-selection step to the checkout you already have and saves the selected dealer on the order.
+
+= Can I use FFL Bridge on a site that is not WooCommerce? =
+
+The plugin itself is for WooCommerce. Custom storefronts can use the REST API, or the browser widget where the platform allows custom JavaScript. The widget embed is documented at [fflbridge.com/docs](https://www.fflbridge.com/docs).
 
 = Does selecting a dealer change the shipping address? =
 
