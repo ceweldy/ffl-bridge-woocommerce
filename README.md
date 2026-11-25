@@ -112,6 +112,8 @@ composer build         # self-hosted ZIP with the update checker
 composer build:wporg   # WordPress.org directory ZIP without it
 ```
 
+`composer check` runs lint, PHPCS, the unit tests under PHPUnit 11, and the same unit tests under the dependency-free runner. The runner also works without Composer: `php tests/run.php` (add `--filter=ShipTo` to run matching tests). These tests are kept identical to `tests/php/woocommerce/` in the FFL Bridge monorepo, except for the plugin path in `tests/bootstrap.php`.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the review and verification expectations. Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
