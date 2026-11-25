@@ -193,6 +193,7 @@ final class FFL_Bridge_API_Client {
 	 * @param int    $limit Maximum result count.
 	 * @param bool   $transfers_only Request only transfer-accepting dealers.
 	 * @param bool   $include_unconfirmed Also request the unconfirmed tier.
+	 * @param string $name Optional dealer name filter (license or trade name).
 	 * @return array{dealers: array<int, array<string, mixed>>, unconfirmed: array<int, array<string, mixed>>|null, coverage: array<string, int>|null, reason: string, reason_message: string}|WP_Error
 	 */
 	public static function search_with_meta( string $zip, int $radius, int $limit = 20, bool $transfers_only = true, bool $include_unconfirmed = false, string $name = '' ): array|WP_Error {
@@ -208,9 +209,9 @@ final class FFL_Bridge_API_Client {
 		$include_unconfirmed = $include_unconfirmed && $transfers_only;
 		$name                = self::sanitize_name_filter( $name );
 		// The name is also matched locally, so ask for the most results.
-		$limit               = '' === $name ? $limit : 25;
-		$cache_key           = self::search_cache_key( $zip, $radius, $limit, $transfers_only, $include_unconfirmed, $name );
-		$cached              = get_transient( $cache_key );
+		$limit     = '' === $name ? $limit : 25;
+		$cache_key = self::search_cache_key( $zip, $radius, $limit, $transfers_only, $include_unconfirmed, $name );
+		$cached    = get_transient( $cache_key );
 		if ( is_array( $cached ) && isset( $cached['dealers'] ) && is_array( $cached['dealers'] ) ) {
 			return $cached;
 		}
@@ -1042,6 +1043,7 @@ final class FFL_Bridge_API_Client {
 	 * @param int    $limit Result limit.
 	 * @param bool   $transfers_only Whether only transfer-accepting dealers were requested.
 	 * @param bool   $include_unconfirmed Whether the unconfirmed tier was requested.
+	 * @param string $name Dealer name filter.
 	 * @return string
 	 */
 	private static function search_cache_key( string $zip, int $radius, int $limit, bool $transfers_only, bool $include_unconfirmed, string $name = '' ): string {

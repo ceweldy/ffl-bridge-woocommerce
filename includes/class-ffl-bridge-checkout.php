@@ -273,32 +273,32 @@ final class FFL_Bridge_Checkout {
 			'storeDealer'  => FFL_Bridge_Store_Pickup::store_dealer(),
 			'shipTo'       => FFL_Bridge_Ship_To_Dealer::current_fields(),
 			'messages'     => array(
-				'heading'       => esc_html__( 'Select a transfer dealer', 'ffl-bridge-for-woocommerce' ),
-				'description'   => esc_html__( 'Search for a dealer, then contact that dealer to confirm current licensing, transfer acceptance, fees, and shipment instructions.', 'ffl-bridge-for-woocommerce' ),
-				'notConfigured' => esc_html__( 'Dealer selection is unavailable because the store connection is not configured. Contact the store before ordering.', 'ffl-bridge-for-woocommerce' ),
-				'zipLabel'      => esc_html__( 'ZIP code', 'ffl-bridge-for-woocommerce' ),
-				'radiusLabel'   => esc_html__( 'Radius', 'ffl-bridge-for-woocommerce' ),
-				'nameLabel'     => esc_html__( 'Dealer name (optional)', 'ffl-bridge-for-woocommerce' ),
-				'search'        => esc_html__( 'Search dealers', 'ffl-bridge-for-woocommerce' ),
-				'searching'     => esc_html__( 'Searching…', 'ffl-bridge-for-woocommerce' ),
-				'select'        => esc_html__( 'Select dealer', 'ffl-bridge-for-woocommerce' ),
-				'selecting'     => esc_html__( 'Verifying…', 'ffl-bridge-for-woocommerce' ),
-				'clear'         => esc_html__( 'Choose a different dealer', 'ffl-bridge-for-woocommerce' ),
-				'noResults'     => esc_html__( 'No eligible dealers were found in that area.', 'ffl-bridge-for-woocommerce' ),
-				'genericError'  => esc_html__( 'The dealer request could not be completed. Try again.', 'ffl-bridge-for-woocommerce' ),
-				'selectedTitle' => esc_html__( 'Selected transfer dealer', 'ffl-bridge-for-woocommerce' ),
-				'confirmNotice' => esc_html__( 'Selection does not guarantee that the dealer will accept this transfer. Contact the dealer before the order ships.', 'ffl-bridge-for-woocommerce' ),
-				'miles'         => esc_html__( 'miles away', 'ffl-bridge-for-woocommerce' ),
-				'verifiedBadge' => esc_html__( 'Confirmed transfer dealer', 'ffl-bridge-for-woocommerce' ),
-				'directoryOnly' => esc_html__( 'Directory listing only', 'ffl-bridge-for-woocommerce' ),
-				'directoryNote' => esc_html__( 'This dealer is listed in the public FFL directory but is not yet verified for checkout, so it cannot be selected here.', 'ffl-bridge-for-woocommerce' ),
-				'preferred'     => esc_html__( 'Store preferred dealer', 'ffl-bridge-for-woocommerce' ),
-				'lastUsed'      => esc_html__( 'Your last dealer', 'ffl-bridge-for-woocommerce' ),
-				'unconfirmed'   => esc_html__( 'Transfer not confirmed', 'ffl-bridge-for-woocommerce' ),
-				'contactDealer' => esc_html__( 'This dealer has not confirmed with FFL Bridge that it accepts transfers. You can still choose it.', 'ffl-bridge-for-woocommerce' ),
-				'licenseBadge'  => esc_html__( 'License not verified', 'ffl-bridge-for-woocommerce' ),
-				'licenseNote'   => esc_html__( 'This dealer has confirmed transfers with FFL Bridge, but its license copy is not verified yet.', 'ffl-bridge-for-woocommerce' ),
-				'followUp'      => FFL_Bridge_Followup::instructions( '', 'checkout' ),
+				'heading'          => esc_html__( 'Select a transfer dealer', 'ffl-bridge-for-woocommerce' ),
+				'description'      => esc_html__( 'Search for a dealer, then contact that dealer to confirm current licensing, transfer acceptance, fees, and shipment instructions.', 'ffl-bridge-for-woocommerce' ),
+				'notConfigured'    => esc_html__( 'Dealer selection is unavailable because the store connection is not configured. Contact the store before ordering.', 'ffl-bridge-for-woocommerce' ),
+				'zipLabel'         => esc_html__( 'ZIP code', 'ffl-bridge-for-woocommerce' ),
+				'radiusLabel'      => esc_html__( 'Radius', 'ffl-bridge-for-woocommerce' ),
+				'nameLabel'        => esc_html__( 'Dealer name (optional)', 'ffl-bridge-for-woocommerce' ),
+				'search'           => esc_html__( 'Search dealers', 'ffl-bridge-for-woocommerce' ),
+				'searching'        => esc_html__( 'Searching…', 'ffl-bridge-for-woocommerce' ),
+				'select'           => esc_html__( 'Select dealer', 'ffl-bridge-for-woocommerce' ),
+				'selecting'        => esc_html__( 'Verifying…', 'ffl-bridge-for-woocommerce' ),
+				'clear'            => esc_html__( 'Choose a different dealer', 'ffl-bridge-for-woocommerce' ),
+				'noResults'        => esc_html__( 'No eligible dealers were found in that area.', 'ffl-bridge-for-woocommerce' ),
+				'genericError'     => esc_html__( 'The dealer request could not be completed. Try again.', 'ffl-bridge-for-woocommerce' ),
+				'selectedTitle'    => esc_html__( 'Selected transfer dealer', 'ffl-bridge-for-woocommerce' ),
+				'confirmNotice'    => esc_html__( 'Selection does not guarantee that the dealer will accept this transfer. Contact the dealer before the order ships.', 'ffl-bridge-for-woocommerce' ),
+				'miles'            => esc_html__( 'miles away', 'ffl-bridge-for-woocommerce' ),
+				'verifiedBadge'    => esc_html__( 'Confirmed transfer dealer', 'ffl-bridge-for-woocommerce' ),
+				'directoryOnly'    => esc_html__( 'Directory listing only', 'ffl-bridge-for-woocommerce' ),
+				'directoryNote'    => esc_html__( 'This dealer is listed in the public FFL directory but is not yet verified for checkout, so it cannot be selected here.', 'ffl-bridge-for-woocommerce' ),
+				'preferred'        => esc_html__( 'Store preferred dealer', 'ffl-bridge-for-woocommerce' ),
+				'lastUsed'         => esc_html__( 'Your last dealer', 'ffl-bridge-for-woocommerce' ),
+				'unconfirmed'      => esc_html__( 'Transfer not confirmed', 'ffl-bridge-for-woocommerce' ),
+				'contactDealer'    => esc_html__( 'This dealer has not confirmed with FFL Bridge that it accepts transfers. You can still choose it.', 'ffl-bridge-for-woocommerce' ),
+				'licenseBadge'     => esc_html__( 'License not verified', 'ffl-bridge-for-woocommerce' ),
+				'licenseNote'      => esc_html__( 'This dealer has confirmed transfers with FFL Bridge, but its license copy is not verified yet.', 'ffl-bridge-for-woocommerce' ),
+				'followUp'         => FFL_Bridge_Followup::instructions( '', 'checkout' ),
 				'pickupTitle'      => esc_html__( 'Transfer dealer for in-store pickup', 'ffl-bridge-for-woocommerce' ),
 				'pickupNote'       => esc_html__( 'You chose in-store pickup, so the store is your transfer dealer. No other dealer is needed.', 'ffl-bridge-for-woocommerce' ),
 				'shipToDealerNote' => esc_html__( 'This order ships to your selected transfer dealer. To change the shipping address, choose a different dealer.', 'ffl-bridge-for-woocommerce' ),
@@ -870,9 +870,9 @@ final class FFL_Bridge_Checkout {
 			return;
 		}
 
-		self::$pending_notes ??= new WeakMap();
-		$notes                          = self::$pending_notes[ $order ] ?? array();
-		$notes[]                        = $note;
+		self::$pending_notes         ??= new WeakMap();
+		$notes                         = self::$pending_notes[ $order ] ?? array();
+		$notes[]                       = $note;
 		self::$pending_notes[ $order ] = $notes;
 	}
 

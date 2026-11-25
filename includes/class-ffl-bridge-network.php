@@ -251,6 +251,7 @@ final class FFL_Bridge_Network {
 	 * dropped, duplicates are removed, and the list is bounded.
 	 *
 	 * @param mixed $input Raw value.
+	 * @param int   $max Maximum number of licenses kept.
 	 * @return array<int, string>
 	 */
 	public static function parse_license_list( mixed $input, int $max = self::MAX_PREFERRED ): array {

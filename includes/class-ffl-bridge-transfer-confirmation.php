@@ -78,7 +78,7 @@ final class FFL_Bridge_Transfer_Confirmation {
 			'ffl-bridge-admin-order',
 			'fflBridgeAdminOrder',
 			array(
-				'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+				'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
 				'working'     => esc_html__( 'Saving confirmation…', 'ffl-bridge-for-woocommerce' ),
 				'failed'      => esc_html__( 'The confirmation could not be saved.', 'ffl-bridge-for-woocommerce' ),
 				'searching'   => esc_html__( 'Searching…', 'ffl-bridge-for-woocommerce' ),

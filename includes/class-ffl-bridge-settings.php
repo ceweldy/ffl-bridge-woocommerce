@@ -495,6 +495,12 @@ final class FFL_Bridge_Settings {
 		return $licenses;
 	}
 
+	/**
+	 * Sanitize selected WooCommerce product-category IDs.
+	 *
+	 * @param mixed $input Submitted values.
+	 * @return array<int, int>
+	 */
 	public static function sanitize_categories( mixed $input ): array {
 		if ( ! is_array( $input ) ) {
 			return array();
