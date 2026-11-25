@@ -27,13 +27,15 @@
         "lint": "parallel-lint --exclude vendor --exclude dist .",
         "phpcs": "phpcs --standard=phpcs.xml.dist",
         "test": "phpunit --configuration phpunit.xml.dist",
+        "test:runner": "@php tests/run.php",
         "test:integration": "phpunit --configuration phpunit.integration.xml.dist",
         "build": "bin/build-release.sh",
         "build:wporg": "bin/build-release.sh --target=wporg",
         "check": [
             "@lint",
             "@phpcs",
-            "@test"
+            "@test",
+            "@test:runner"
         ]
     },
     "support": {
