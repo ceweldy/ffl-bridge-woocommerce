@@ -33,6 +33,16 @@ final class FFL_Bridge_Network {
 
 	public const MAX_PREFERRED = 100;
 
+	/**
+	 * Store blocklist: license numbers this store does not ship to.
+	 */
+	public const BLOCKLIST_OPTION = 'ffl_bridge_blocked_licenses';
+
+	/**
+	 * Maximum number of blocked license numbers.
+	 */
+	public const MAX_BLOCKED = 1000;
+
 	public const MODE_OPTION         = 'ffl_bridge_dealer_mode';
 	public const OFFER_OPTION        = 'ffl_bridge_hybrid_offer';
 	public const MODE_HYBRID         = 'hybrid';
@@ -147,6 +157,94 @@ final class FFL_Bridge_Network {
 	}
 
 	/**
+	 * License numbers the store blocked, normalized.
+	 *
+	 * @return array<int, string>
+	 */
+	public static function get_blocked_licenses(): array {
+		return self::parse_license_list( get_option( self::BLOCKLIST_OPTION, array() ), self::MAX_BLOCKED );
+	}
+
+	/**
+	 * Whether a license number is on the store blocklist.
+	 *
+	 * @param string $license License number, with or without dashes.
+	 * @return bool
+	 */
+	public static function is_blocked( string $license ): bool {
+		$normalized = self::normalize_license( $license );
+		return '' !== $normalized && in_array( $normalized, self::get_blocked_licenses(), true );
+	}
+
+	/**
+	 * Keep dealers whose name or license name contains the filter,
+	 * case-insensitively. An empty filter keeps every dealer.
+	 *
+	 * @param array<int, array<string, mixed>> $dealers Normalized dealers.
+	 * @param string                           $name Sanitized name filter.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function filter_by_name( array $dealers, string $name ): array {
+		if ( '' === $name ) {
+			return $dealers;
+		}
+
+		$lower  = static fn ( string $text ): string => function_exists( 'mb_strtolower' ) ? mb_strtolower( $text ) : strtolower( $text );
+		$needle = $lower( $name );
+		return array_values(
+			array_filter(
+				$dealers,
+				static fn ( mixed $dealer ): bool => is_array( $dealer ) && (
+					str_contains( $lower( (string) ( $dealer['name'] ?? '' ) ), $needle ) ||
+					str_contains( $lower( (string) ( $dealer['business_name'] ?? '' ) ), $needle )
+				)
+			)
+		);
+	}
+
+	/**
+	 * Remove blocked dealers from a list.
+	 *
+	 * @param array<int, array<string, mixed>> $dealers Dealers.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function remove_blocked( array $dealers ): array {
+		$blocked = self::get_blocked_licenses();
+		if ( array() === $blocked ) {
+			return $dealers;
+		}
+
+		return array_values(
+			array_filter(
+				$dealers,
+				static fn ( mixed $dealer ): bool => ! is_array( $dealer ) || ! in_array( self::normalize_license( (string) ( $dealer['license'] ?? '' ) ), $blocked, true )
+			)
+		);
+	}
+
+	/**
+	 * Remove blocked dealers from a search_with_meta() result, in both the
+	 * main results and the unconfirmed tier, before outcomes are worked out.
+	 *
+	 * @param mixed $result Search result or WP_Error.
+	 * @return mixed
+	 */
+	public static function filter_search_result( mixed $result ): mixed {
+		if ( ! is_array( $result ) ) {
+			return $result;
+		}
+
+		if ( is_array( $result['dealers'] ?? null ) ) {
+			$result['dealers'] = self::remove_blocked( $result['dealers'] );
+		}
+		if ( is_array( $result['unconfirmed'] ?? null ) ) {
+			$result['unconfirmed'] = self::remove_blocked( $result['unconfirmed'] );
+		}
+
+		return $result;
+	}
+
+	/**
 	 * Parse license numbers from a textarea string or a stored list.
 	 *
 	 * Each license may be entered with or without dashes. Invalid entries are
@@ -155,7 +253,7 @@ final class FFL_Bridge_Network {
 	 * @param mixed $input Raw value.
 	 * @return array<int, string>
 	 */
-	public static function parse_license_list( mixed $input ): array {
+	public static function parse_license_list( mixed $input, int $max = self::MAX_PREFERRED ): array {
 		if ( is_string( $input ) ) {
 			$input = preg_split( '/[\s,;]+/', $input );
 		}
@@ -171,7 +269,7 @@ final class FFL_Bridge_Network {
 				$licenses[] = $license;
 			}
 
-			if ( count( $licenses ) >= self::MAX_PREFERRED ) {
+			if ( count( $licenses ) >= $max ) {
 				break;
 			}
 		}

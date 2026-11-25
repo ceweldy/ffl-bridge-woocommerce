@@ -149,17 +149,31 @@ final class FFL_Bridge_Selection {
 	}
 
 	/**
-	 * Return the current cart hash.
+	 * Return a hash of the cart contents: products, variations and quantities.
+	 *
+	 * WooCommerce's own cart hash also covers the cart total, which changes
+	 * whenever shipping is recalculated (a new shipping address or method),
+	 * and a selection must not be lost for that.
 	 *
 	 * @return string|WP_Error
 	 */
 	public static function get_cart_hash(): string|WP_Error {
-		if ( ! function_exists( 'WC' ) || ! WC()->cart ) {
+		if ( ! function_exists( 'WC' ) || ! WC()->cart || WC()->cart->is_empty() ) {
 			return new WP_Error( 'ffl_bridge_cart_unavailable' );
 		}
 
-		$cart_hash = WC()->cart->get_cart_hash();
-		return is_string( $cart_hash ) && '' !== $cart_hash ? $cart_hash : new WP_Error( 'ffl_bridge_cart_unavailable' );
+		$contents = array();
+		foreach ( WC()->cart->get_cart() as $key => $item ) {
+			$contents[] = array(
+				(string) $key,
+				absint( $item['product_id'] ?? 0 ),
+				absint( $item['variation_id'] ?? 0 ),
+				(float) ( $item['quantity'] ?? 1 ),
+			);
+		}
+
+		$json = wp_json_encode( $contents );
+		return is_string( $json ) ? hash( 'sha256', 'ffl-bridge-cart-v2|' . $json ) : new WP_Error( 'ffl_bridge_cart_unavailable' );
 	}
 
 	/**

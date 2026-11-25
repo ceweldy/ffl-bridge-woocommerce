@@ -63,7 +63,7 @@ final class FFL_Bridge_Blocks_Integration implements IntegrationInterface {
 		wp_register_script(
 			'ffl-bridge-checkout-blocks',
 			FFL_BRIDGE_PLUGIN_URL . 'assets/js/blocks.js',
-			array( 'ffl-bridge-checkout', 'wc-blocks-checkout', 'wc-settings', 'wp-element', 'wp-plugins' ),
+			array( 'ffl-bridge-checkout', 'wc-blocks-checkout', 'wc-settings', 'wp-data', 'wp-element', 'wp-plugins' ),
 			FFL_BRIDGE_VERSION,
 			true
 		);

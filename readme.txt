@@ -6,7 +6,7 @@ Tested up to: 7.1
 Requires PHP: 8.3
 WC requires at least: 10.8
 WC tested up to: 10.9
-Stable tag: 1.2.1
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -29,9 +29,23 @@ FFL Bridge for WooCommerce adds a transfer dealer step to WooCommerce checkout. 
 * The same instructions appear on the order confirmation page, in My Account, and in customer order emails.
 * You choose the license copy email address (the site admin email by default) and an optional fax number.
 
+**Ship to the chosen dealer (default for new installs)**
+
+* When a shopper selects a dealer for an order that needs one, the shipping address becomes the dealer's premises address and name, on classic checkout and the Checkout Block, and the shipping fields stay locked to it.
+* When the order is placed, the shipping address is set again from the dealer record FFL Bridge returns at that moment, so an address changed in the browser is not used. Shipping rates use the dealer address. The shipping first and last name stay the shopper's, and billing is never changed.
+* Existing installs keep the shopper's shipping address until an administrator turns this on from the admin notice or the settings page.
+
+**Dealer picker**
+
+* An optional "Dealer name" box narrows the ZIP code search to dealers whose name or license name contains the text.
+* A logged-in customer's dealer from their last order is listed first, labeled "Your last dealer", when it is in the search results.
+* A store blocklist of license numbers hides dealers your store does not ship to. A blocked dealer chosen earlier is refused again at selection and when the order is placed.
+* In-store pickup: enter your store's own FFL license, and when a shopper picks local pickup for an order that needs a dealer, your store is the transfer dealer.
+
 **Store tools**
 
-* The order screen shows the selected dealer, the license number, and separate transfer and license status.
+* The order screen shows the selected dealer, the license number, and separate transfer and license status, with a link to check the license with ATF eZ Check in a new tab.
+* "Change dealer" on the order screen searches FFL Bridge and replaces the dealer, or adds one to a manually created order. Each change adds an order note.
 * One click on "Mark transfer confirmed" records who confirmed it and when, with an optional license file stored privately on the order.
 * An admin notice and settings table show ZIP areas where shoppers found no confirmed dealer.
 * A connection test reports dealer coverage for any ZIP code and radius.
@@ -39,12 +53,12 @@ FFL Bridge for WooCommerce adds a transfer dealer step to WooCommerce checkout. 
 **Also included**
 
 * Classic checkout and the WooCommerce Checkout Block
-* Required or optional selection, for every product or chosen categories
+* Required or optional selection, for every product, chosen categories, or products and variations marked "Requires FFL transfer" (also as a bulk action)
 * Store preferred dealers, listed first when they appear in a search
 * High-Performance Order Storage (HPOS) compatibility
 * The FFL Bridge API key stays on your server and is never sent to the browser
 
-This plugin records dealer details for your fulfillment workflow. It does not change the order's shipping address, create shipping labels, contact dealers itself (the optional dealer notice is sent by FFL Bridge), send orders or documents to dealers, arrange transfers, decide which products require a transfer, or guarantee legal compliance.
+This plugin records dealer details for your fulfillment workflow and, when "Use the chosen dealer as the shipping address" is on, sets the order's shipping address to that dealer. It does not create shipping labels, contact dealers itself (the optional dealer notice is sent by FFL Bridge), send orders or documents to dealers, arrange transfers, decide which products legally require a transfer, or guarantee legal compliance. The eZ Check link opens ATF's site; the plugin does not check licenses with ATF itself.
 
 == External services ==
 
@@ -52,19 +66,19 @@ This plugin connects to the FFL Bridge service operated by FFL Bridge (https://w
 
 Data is sent to `https://www.fflbridge.com/api/v1` only in these cases:
 
-* **Dealer search at checkout**: the shopper-entered ZIP code and search radius, the store's site address (origin), the store's API key, and standard request headers.
+* **Dealer search at checkout**: the shopper-entered ZIP code and search radius, the dealer name the shopper typed in the optional "Dealer name" box (if any), the store's site address (origin), the store's API key, and standard request headers.
 * **Dealer selection and order placement**: the selected dealer's FFL Bridge identifier, to retrieve and re-check the current dealer record.
 * **Connection and coverage test in settings**: the ZIP code and radius entered by the store administrator.
+* **Store FFL for in-store pickup, when an administrator saves a store license number**: one dealer search with the store ZIP code and a 10-mile radius, to find the store's FFL Bridge listing. At checkout with local pickup, the store's FFL Bridge identifier, to re-check that listing.
+* **"Change dealer" on the order screen**: the ZIP code, radius and optional dealer name entered by store staff, then the chosen dealer's FFL Bridge identifier, to retrieve the dealer record. No shopper data is sent, and no dealer is emailed.
 * **"Mark transfer confirmed" by store staff**: the dealer identifier, license number, order number, an optional staff note, and an optional copy of the dealer license.
 * **Dealer notice, only if the store turns on "Email the selected dealer when an order is placed" (off by default)**: after an order with a verified dealer is placed, the dealer identifier, the shopper's billing name and email address, the order number, and an order key (a hash of the site address, order ID and order creation time that contains no shopper data), so FFL Bridge can email the dealer. FFL Bridge does not email the shopper. The order shows whether FFL Bridge sent, queued, skipped or failed the dealer email, or "requested" when FFL Bridge could not confirm it, including when FFL Bridge did not answer in time. A dealer notice FFL Bridge skipped because it already emailed the dealer about an earlier order with the same number is now recorded as skipped, not sent.
 
-Unless the store turns on the dealer notice, the plugin does not send shopper names or email addresses to FFL Bridge. It never sends billing or shipping addresses or payment details.
+Unless the store turns on the dealer notice, the plugin does not send shopper names or email addresses to FFL Bridge. It never sends billing or shipping addresses or payment details. "Use the chosen dealer as the shipping address" sends nothing extra: the dealer address comes from FFL Bridge to your site. The store blocklist, the "Requires FFL transfer" flags, and a customer's last-used dealer stay on your site. The ATF eZ Check link opens ATF's website in the staff member's browser; the plugin sends nothing to ATF.
 
-<!-- self-hosted-only:start -->
 Copies downloaded from fflbridge.com, not the copy from WordPress.org, also check `https://fflbridge.com/api/plugins/woocommerce/update` for new versions when WordPress checks for plugin updates (at most every 12 hours, or every hour after a failed check), and download the update package from fflbridge.com when an administrator installs an update. That check sends only the plugin version in its user agent and standard request headers; it sends no API key, store data, or shopper data.
-<!-- self-hosted-only:end -->
 
-Stored in WordPress: search results are cached for up to five minutes; the current selection is kept in the WooCommerce session; dealer details are saved on the order; and when a search finds no confirmed dealer, the first three digits of the ZIP code, the radius, and counts are kept for up to 31 days (30 days per search, kept by day) so administrators can see coverage gaps.
+Stored in WordPress: search results are cached for up to five minutes; the current selection is kept in the WooCommerce session, with the shopper's own shipping address while a dealer address replaces it; dealer details are saved on the order, and with "Use the chosen dealer as the shipping address" the order's shipping address is the dealer's; with "List a returning customer's last dealer first" on, a logged-in customer's last dealer's FFL Bridge identifier is saved in their user account (included in the WordPress personal data export and erase tools); and when a search finds no confirmed dealer, the first three digits of the ZIP code, the radius, and counts are kept for up to 31 days (30 days per search, kept by day) so administrators can see coverage gaps.
 
 FFL Bridge [Terms of Service](https://www.fflbridge.com/terms) and [Privacy Policy](https://www.fflbridge.com/privacy).
 
@@ -74,9 +88,9 @@ Dealer results and status labels support your workflow. They are not legal advic
 
 == Installation ==
 
-1. In WordPress, open Plugins > Add New Plugin, search for "FFL Bridge for WooCommerce", then install and activate it. WooCommerce 10.8 or newer must be active.
+1. Download the plugin ZIP from fflbridge.com. In WordPress, open Plugins > Add New Plugin > Upload Plugin, choose the ZIP, then install and activate it. WooCommerce 10.8 or newer must be active.
 2. Open WooCommerce > FFL Bridge and enter your FFL Bridge server API key (starts with `ffl_live_`). A browser key (starts with `ffl_pub_`) does not work with the plugin. For stronger separation, define `FFL_BRIDGE_API_KEY` in `wp-config.php` instead.
-3. Choose the dealer selection mode, the license copy email and fax, the product categories that need a dealer, and whether a selection is required.
+3. Choose the dealer selection mode, whether the chosen dealer is the shipping address, the license copy email and fax, the product categories that need a dealer (or mark products "Requires FFL transfer"), and whether a selection is required.
 4. Use the connection and coverage test with a ZIP code your customers use.
 5. Place a test order in a staging site before going live.
 
@@ -102,9 +116,30 @@ Open the order. The dealer panel shows the license number and status. Click "Mar
 
 Yes. Both classic checkout and the WooCommerce Checkout Block are supported.
 
+= Which products need a transfer dealer? =
+
+You choose. Check "Requires FFL transfer" on a product (General tab) or on a variation, use the "Mark as requiring an FFL transfer" bulk action on the Products list, or select product categories in WooCommerce > FFL Bridge. Precedence:
+
+1. If no category is selected and no product or variation is flagged anywhere, every product needs a dealer. This is the safe default for a new store.
+2. Otherwise a cart needs a dealer when any item's product is flagged, its variation is flagged, or the product is in a selected category or a child of one. A flagged parent product covers all of its variations.
+
+The plugin does not decide which products legally require a transfer; your store sets this.
+
 = Does selecting a dealer change the shipping address? =
 
-No. The dealer is saved as order details. Your staff follow your own shipping and dealer coordination process.
+Yes, when "Use the chosen dealer as the shipping address" is on. It is on for new installs; stores that installed an earlier version keep the shopper's address and see an admin notice offering it. When on, selecting a dealer fills the shipping address with the dealer's premises address and name and locks those fields, on classic checkout and the Checkout Block. When the order is placed, the shipping address is set again from the dealer record FFL Bridge returns, so an address typed or changed in the browser is not used. The shipping first and last name stay the shopper's and billing is not changed. Carts without an item that needs a dealer keep the shopper's address. In a cart with both kinds of items, the whole order ships to the dealer. In-store pickup orders are not changed. When the setting is off, the dealer is saved as order details only.
+
+= Can I change the dealer after the order is placed? =
+
+Yes. On the order screen, "Change dealer" searches FFL Bridge by ZIP code and optional name, and saves the dealer you choose from the record FFL Bridge returns. It can also add a dealer to an order created by hand. Each change adds an order note with who made it and the old and new dealer, and clears a store transfer confirmation made for the previous dealer. With "Use the chosen dealer as the shipping address" on, the shipping address follows the new dealer. No dealer is emailed.
+
+= How do I keep a dealer out of my checkout? =
+
+Add its license number to "Dealers to hide (blocklist)" in WooCommerce > FFL Bridge. Blocked dealers are not shown in search results. If a shopper chose one before you blocked it, selecting it and placing the order are both refused, so the shopper chooses another dealer.
+
+= Does in-store pickup need a dealer? =
+
+If your store holds an FFL, enter its license number under "Store FFL for in-store pickup". When a shopper chooses a local pickup shipping method for an order that needs a dealer, your store is saved as the transfer dealer and the shopper does not choose one. If FFL Bridge cannot re-check your store's listing at checkout, the order is not placed, so the shopper can choose another shipping method.
 
 = Does a selectable dealer guarantee I can ship the order? =
 
@@ -120,7 +155,7 @@ New searches and dealer checks cannot complete until the service is back. The pl
 
 = What happens when I uninstall the plugin? =
 
-Uninstalling removes the plugin settings, including an API key saved in WordPress. Dealer details already saved on orders, and license files attached to orders, are kept as part of your order records.
+Uninstalling removes the plugin settings, including an API key saved in WordPress, the store blocklist, the "Requires FFL transfer" product flags, and customers' saved last-used dealers. Dealer details already saved on orders, order shipping addresses, and license files attached to orders are kept as part of your order records.
 
 == Screenshots ==
 
@@ -130,6 +165,20 @@ Uninstalling removes the plugin settings, including an API key saved in WordPres
 4. Settings for dealer selection mode and the license copy email and fax.
 
 == Changelog ==
+
+= 1.3.0 =
+
+* New: "Use the chosen dealer as the shipping address". Selecting a dealer writes the dealer's premises address and name into the shipping fields and locks them on classic checkout and the Checkout Block. At order creation the shipping address is set again from the dealer record FFL Bridge returns, never from browser input. Shipping rates use the dealer address. On for new installs; existing installs see an admin notice offering it.
+* New: "Requires FFL transfer" checkbox on simple products and variations, and a Products list bulk action. Works with the category setting. With no categories and no flagged product, every product still needs a dealer.
+* New: ATF eZ Check link on the order screen's dealer panel, with the license digits eZ Check asks for. eZ Check is a quick license status check, not a substitute for the license copy.
+* New: store blocklist of dealer license numbers, hidden from search and refused again at selection and order creation.
+* New: a logged-in customer's last-used dealer is listed first when it is in the search results. On for new installs; offered to existing installs.
+* New: optional "Dealer name" box in the dealer picker. On for new installs; offered to existing installs.
+* New: "Change dealer" on the order screen replaces the dealer or adds one to a manually created order, from the record FFL Bridge returns. Each change adds an order note.
+* New: in-store pickup. With the store's own FFL license saved, choosing local pickup makes the store the transfer dealer.
+* Fix: a selected dealer is no longer cleared when the cart total changes, for example when shipping is recalculated after a new address or shipping method. Changing the cart's items still asks for the dealer again.
+* Fix: classic checkout order notes about the dealer are now saved.
+* Also new since 1.2.1: the optional "Email the selected dealer when an order is placed" setting (off by default), sent by FFL Bridge, with its delivery status on the order; an "FFL Bridge API base URL" setting for testing against a staging server; clearer connection test errors; Checkout Block orders without a required dealer fail with a 400 message instead of a 500; a selected category covers its child categories; the order-received page shows the dealer once.
 
 = 1.2.1 =
 
@@ -161,6 +210,10 @@ Uninstalling removes the plugin settings, including an API key saved in WordPres
 * Initial proof-of-concept release.
 
 == Upgrade Notice ==
+
+= 1.3.0 =
+
+Adds ship-to-dealer, per-product transfer flags, a dealer blocklist, dealer name search, change dealer on orders, in-store pickup, and an ATF eZ Check link. Your checkout is unchanged until you turn the new checkout options on from the admin notice or the settings page.
 
 = 1.2.1 =
 
