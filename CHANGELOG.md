@@ -42,7 +42,7 @@ Release candidate. Not tagged and not deployed to WordPress.org yet; the date is
 - The readme and README say the plugin needs an account with a verified email and a server API key (starts with `ffl_live_`), and that no domain or site address is needed on that key.
 - The readme has a new short description, a "Free to start" section on the Free plan, a "Before you activate" section that warns a store without a saved API key cannot complete a required dealer selection, installation steps that start with creating the account and verifying the email, and FAQ entries on pricing, whether a store needs its own FFL, the not-configured checkout message, the connection test, the dealer step on accessories, whether the plugin replaces WooCommerce checkout, and sites that are not WooCommerce.
 - The readme External services section says FFL Bridge emails only dealers that have an email address on file and have not opted out, and that each dealer email carries Stop and Hide links.
-- Unit tests run under PHPUnit 11 (`composer test`) and under a dependency-free runner (`composer test:runner`, `php tests/run.php`), in GitHub Actions and Jenkins. `Jenkinsfile` is excluded from release ZIPs.
+- Unit tests run under PHPUnit 11 (`composer test`) and under a dependency-free runner (`composer test:runner`, `php tests/run.php`), through `composer check` in Jenkins and the WordPress.org workflow. On pull requests the WordPress.org workflow also builds both ZIPs with a fixed `SOURCE_DATE_EPOCH` and reports their SHA-256. `Jenkinsfile` is excluded from release ZIPs.
 
 ## [1.2.1] - 2026-10-10
 
