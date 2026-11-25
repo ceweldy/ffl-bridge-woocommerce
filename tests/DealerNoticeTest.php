@@ -974,7 +974,7 @@ final class DealerNoticeTest extends FFL_Bridge_TestCase {
 					'license'           => self::LICENSE,
 					'checkout_verified' => true,
 				),
-				'cart_hash'  => 'cart-hash-1',
+				'cart_hash'  => FFL_Bridge_Selection::get_cart_hash(),
 				'expires_at' => time() + 3600,
 			)
 		);

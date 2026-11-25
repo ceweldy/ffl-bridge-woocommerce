@@ -143,6 +143,58 @@ final class FFL_Bridge_Order {
 	}
 
 	/**
+	 * ATF's FFL eZ Check page.
+	 */
+	public const EZ_CHECK_URL = 'https://fflezcheck.atf.gov/FFLEzCheck/';
+
+	/**
+	 * The parts of a license number that ATF eZ Check asks for: the first
+	 * three digits and the last five.
+	 *
+	 * @param string $license License number, with or without dashes.
+	 * @return array{0: string, 1: string}|null
+	 */
+	public static function ez_check_parts( string $license ): ?array {
+		$normalized = FFL_Bridge_Network::normalize_license( $license );
+		if ( '' === $normalized ) {
+			return null;
+		}
+
+		$parts = explode( '-', $normalized );
+		return array( $parts[0] . $parts[1], $parts[5] );
+	}
+
+	/**
+	 * Link staff to ATF eZ Check for the dealer's license.
+	 *
+	 * @param string $license License number.
+	 * @return void
+	 */
+	public static function render_ez_check_link( string $license ): void {
+		$parts = self::ez_check_parts( $license );
+		?>
+		<p class="ffl-bridge-ez-check">
+			<a href="<?php echo esc_url( self::EZ_CHECK_URL ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html__( 'Check this license with ATF eZ Check', 'ffl-bridge-for-woocommerce' ); ?><span class="screen-reader-text"> <?php echo esc_html__( '(opens in a new tab)', 'ffl-bridge-for-woocommerce' ); ?></span></a>
+			<?php if ( null !== $parts ) : ?>
+				<br>
+				<?php
+				echo wp_kses(
+					sprintf(
+						/* translators: 1: first three digits of the license, 2: last five digits. */
+						__( 'eZ Check asks for the license\'s first 3 digits: %1$s and last 5 digits: %2$s.', 'ffl-bridge-for-woocommerce' ),
+						'<code>' . esc_html( $parts[0] ) . '</code>',
+						'<code>' . esc_html( $parts[1] ) . '</code>'
+					),
+					array( 'code' => array() )
+				);
+				?>
+			<?php endif; ?>
+			<br><em><?php echo esc_html__( 'ATF eZ Check is a quick license status check. It is not a substitute for the license copy. This is not legal advice.', 'ffl-bridge-for-woocommerce' ); ?></em>
+		</p>
+		<?php
+	}
+
+	/**
 	 * Format the stored dealer location.
 	 *
 	 * @param array<string, string> $ffl Dealer values.
@@ -162,6 +214,12 @@ final class FFL_Bridge_Order {
 	public static function display_admin_order_ffl( WC_Order $order ): void {
 		$ffl = self::get_ffl_data( $order );
 		if ( null === $ffl ) {
+			if ( current_user_can( FFL_Bridge_Order_Dealer_Change::capability() ) ) {
+				echo '<div class="ffl-bridge-admin-order"><h3>' . esc_html__( 'Transfer dealer', 'ffl-bridge-for-woocommerce' ) . '</h3>';
+				echo '<p>' . esc_html__( 'No transfer dealer is saved on this order.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+				FFL_Bridge_Order_Dealer_Change::render_controls( $order, false );
+				echo '</div>';
+			}
 			return;
 		}
 
@@ -177,6 +235,7 @@ final class FFL_Bridge_Order {
 				<?php endif; ?>
 				<strong><?php echo esc_html__( 'License:', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html( $ffl['license'] ); ?>
 			</p>
+			<?php self::render_ez_check_link( $ffl['license'] ); ?>
 			<?php if ( 'legacy' === $ffl['source'] ) : ?>
 				<p><strong><?php echo esc_html__( 'Legacy record:', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html__( 'This dealer was saved by an older plugin version and was not server-verified under the current workflow.', 'ffl-bridge-for-woocommerce' ); ?></p>
 			<?php else : ?>
@@ -200,7 +259,14 @@ final class FFL_Bridge_Order {
 				</p>
 				<?php FFL_Bridge_Transfer_Confirmation::render_controls( $order, $ffl ); ?>
 			<?php endif; ?>
-			<p><strong><?php echo esc_html__( 'Fulfillment check required:', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html__( 'Confirm current licensing, transfer acceptance, fees, and shipping instructions directly with the dealer. This metadata does not change the WooCommerce shipping address.', 'ffl-bridge-for-woocommerce' ); ?></p>
+			<?php FFL_Bridge_Order_Dealer_Change::render_controls( $order, true ); ?>
+			<p><strong><?php echo esc_html__( 'Fulfillment check required:', 'ffl-bridge-for-woocommerce' ); ?></strong> <?php echo esc_html__( 'Confirm current licensing, transfer acceptance, fees, and shipping instructions directly with the dealer.', 'ffl-bridge-for-woocommerce' ); ?>
+				<?php if ( 'yes' === $order->get_meta( '_ffl_bridge_ship_to_dealer' ) ) : ?>
+					<?php echo esc_html__( 'The shipping address on this order was set to this dealer from the FFL Bridge dealer record.', 'ffl-bridge-for-woocommerce' ); ?>
+				<?php else : ?>
+					<?php echo esc_html__( 'The shipping address on this order is the one the shopper entered.', 'ffl-bridge-for-woocommerce' ); ?>
+				<?php endif; ?>
+			</p>
 		</div>
 		<?php
 	}

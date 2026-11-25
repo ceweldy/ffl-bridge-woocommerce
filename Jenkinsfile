@@ -28,7 +28,7 @@ bash bin/build-release.sh
 artifact="$(find dist -maxdepth 1 -type f -name 'ffl-bridge-for-woocommerce-*.zip' -print -quit)"
 test -n "${artifact}"
 unzip -t "${artifact}"
-if unzip -Z1 "${artifact}" | grep -E '(^|/)(\\.distignore|\\.git|\\.github|bin|tests|vendor|composer\\.(json|lock)|php(cs|unit)\\.xml\\.dist|CHANGELOG\\.md|CONTRIBUTING\\.md|README\\.md|SECURITY\\.md)(/|$)'; then
+if unzip -Z1 "${artifact}" | grep -E '(^|/)(\\.distignore|\\.git|\\.github|bin|tests|vendor|composer\\.(json|lock)|php(cs|unit)\\.xml\\.dist|CHANGELOG\\.md|Jenkinsfile|CONTRIBUTING\\.md|README\\.md|SECURITY\\.md)(/|$)'; then
   echo 'Release archive contains a development-only path.' >&2
   exit 1
 fi'''

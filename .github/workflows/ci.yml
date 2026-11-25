@@ -58,6 +58,9 @@ jobs:
       - name: PHPUnit unit tests
         run: composer test
 
+      - name: Unit tests under the dependency-free runner
+        run: php tests/run.php
+
       - name: Check JavaScript syntax
         run: find assets/js .github/scripts -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
 

@@ -21,6 +21,11 @@ jobs:
     name: Directory build dry run
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # Pull requests build with a fixed timestamp so the ZIP digests can be
+      # compared across builds (2026-11-19T12:00:00Z, the value used for the
+      # 1.3.0 ZIPs in ceweldy/ffl-bridge). Tag builds keep the commit time.
+      SOURCE_DATE_EPOCH: ${{ github.event_name == 'pull_request' && '1795089600' || '' }}
 
     steps:
       - name: Check out source
@@ -40,6 +45,9 @@ jobs:
           composer audit --locked --no-interaction
           composer check
           find assets/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Build-script tests
+        run: bash tests/build-release-test.sh
 
       - name: Build the directory package
         env:
@@ -72,6 +80,47 @@ jobs:
           build-dir: dist/wporg-build/ffl-bridge-for-woocommerce
           slug: ffl-bridge-for-woocommerce
           include-experimental: 'true'
+
+      - name: Build the self-hosted package and report both digests
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          bin/build-release.sh --target=self-hosted
+          version="$(sed -n 's/^[[:space:]]*\* Version:[[:space:]]*//p' ffl-bridge.php | head -n 1 | tr -d '\r')"
+          self="dist/${PLUGIN_SLUG}-${version}.zip"
+          wporg="dist/${PLUGIN_SLUG}-${version}-wporg.zip"
+          for artifact in "${self}" "${wporg}"; do
+            unzip -tq "${artifact}"
+            if unzip -Z1 "${artifact}" | grep -E '(^|/)(\.distignore|\.git|\.github|\.wordpress-org|bin|docs|tests|vendor|composer\.(json|lock)|php(cs|unit)\.xml\.dist|CHANGELOG\.md|Jenkinsfile|CONTRIBUTING\.md|README\.md|SECURITY\.md)(/|$)'; then
+              echo "${artifact} contains a development-only path." >&2
+              exit 1
+            fi
+          done
+          if unzip -Z1 "${wporg}" | grep -q 'class-ffl-bridge-updater.php'; then
+            echo 'The WordPress.org ZIP contains class-ffl-bridge-updater.php.' >&2
+            exit 1
+          fi
+          if unzip -p "${wporg}" "${PLUGIN_SLUG}/ffl-bridge.php" | grep -q 'Update URI'; then
+            echo 'The WordPress.org ZIP has an Update URI header.' >&2
+            exit 1
+          fi
+          {
+            echo "### Release ZIPs (SOURCE_DATE_EPOCH ${SOURCE_DATE_EPOCH})"
+            echo
+            echo '| ZIP | Bytes | SHA-256 |'
+            echo '| --- | ---: | --- |'
+            for artifact in "${self}" "${wporg}"; do
+              echo "| $(basename "${artifact}") | $(stat -c %s "${artifact}") | $(sha256sum "${artifact}" | cut -d' ' -f1) |"
+            done
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the ZIPs
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-zips
+          path: dist/*.zip
+          if-no-files-found: error
 
   deploy:
     name: Deploy to WordPress.org

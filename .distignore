@@ -4,6 +4,7 @@
 .vscode/***
 .wordpress-org/***
 .distignore
+Jenkinsfile
 .editorconfig
 .env*
 .gitattributes

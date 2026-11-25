@@ -193,9 +193,10 @@ final class FFL_Bridge_API_Client {
 	 * @param int    $limit Maximum result count.
 	 * @param bool   $transfers_only Request only transfer-accepting dealers.
 	 * @param bool   $include_unconfirmed Also request the unconfirmed tier.
+	 * @param string $name Optional dealer name filter (license or trade name).
 	 * @return array{dealers: array<int, array<string, mixed>>, unconfirmed: array<int, array<string, mixed>>|null, coverage: array<string, int>|null, reason: string, reason_message: string}|WP_Error
 	 */
-	public static function search_with_meta( string $zip, int $radius, int $limit = 20, bool $transfers_only = true, bool $include_unconfirmed = false ): array|WP_Error {
+	public static function search_with_meta( string $zip, int $radius, int $limit = 20, bool $transfers_only = true, bool $include_unconfirmed = false, string $name = '' ): array|WP_Error {
 		if ( 1 !== preg_match( '/\A\d{5}\z/', $zip ) ) {
 			return new WP_Error( 'ffl_bridge_invalid_zip', __( 'Enter a valid five-digit ZIP code.', 'ffl-bridge-for-woocommerce' ) );
 		}
@@ -206,8 +207,11 @@ final class FFL_Bridge_API_Client {
 
 		$limit               = max( 1, min( 25, $limit ) );
 		$include_unconfirmed = $include_unconfirmed && $transfers_only;
-		$cache_key           = self::search_cache_key( $zip, $radius, $limit, $transfers_only, $include_unconfirmed );
-		$cached              = get_transient( $cache_key );
+		$name                = self::sanitize_name_filter( $name );
+		// The name is also matched locally, so ask for the most results.
+		$limit     = '' === $name ? $limit : 25;
+		$cache_key = self::search_cache_key( $zip, $radius, $limit, $transfers_only, $include_unconfirmed, $name );
+		$cached    = get_transient( $cache_key );
 		if ( is_array( $cached ) && isset( $cached['dealers'] ) && is_array( $cached['dealers'] ) ) {
 			return $cached;
 		}
@@ -223,6 +227,9 @@ final class FFL_Bridge_API_Client {
 		if ( $include_unconfirmed ) {
 			$query['includeUnconfirmed'] = 'true';
 		}
+		if ( '' !== $name ) {
+			$query['name'] = $name;
+		}
 
 		$response = self::request( '/search', $query );
 		if ( is_wp_error( $response ) ) {
@@ -234,10 +241,13 @@ final class FFL_Bridge_API_Client {
 			return new WP_Error( 'ffl_bridge_invalid_response', __( 'FFL Bridge returned an invalid search response.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		$result = array_merge(
+		$unconfirmed = self::parse_unconfirmed_tier( $response['data'], $limit );
+		$result      = array_merge(
 			array(
-				'dealers'     => self::normalize_dealer_list( $raw_results, $limit ),
-				'unconfirmed' => self::parse_unconfirmed_tier( $response['data'], $limit ),
+				// The name is also matched here, so an FFL Bridge API that does not
+				// know the name filter still returns only matching dealers.
+				'dealers'     => FFL_Bridge_Network::filter_by_name( self::normalize_dealer_list( $raw_results, $limit ), $name ),
+				'unconfirmed' => null === $unconfirmed ? null : FFL_Bridge_Network::filter_by_name( $unconfirmed, $name ),
 			),
 			self::parse_search_meta( $response['data'] )
 		);
@@ -1033,12 +1043,33 @@ final class FFL_Bridge_API_Client {
 	 * @param int    $limit Result limit.
 	 * @param bool   $transfers_only Whether only transfer-accepting dealers were requested.
 	 * @param bool   $include_unconfirmed Whether the unconfirmed tier was requested.
+	 * @param string $name Dealer name filter.
 	 * @return string
 	 */
-	private static function search_cache_key( string $zip, int $radius, int $limit, bool $transfers_only, bool $include_unconfirmed ): string {
+	private static function search_cache_key( string $zip, int $radius, int $limit, bool $transfers_only, bool $include_unconfirmed, string $name = '' ): string {
 		$key_scope = hash_hmac( 'sha256', self::get_api_key(), wp_salt( 'auth' ) );
 		$mode      = ( $transfers_only ? 't' : 'a' ) . ( $include_unconfirmed ? 'u' : '' );
-		return 'ffl_bridge_search_v3_' . hash( 'sha256', $key_scope . '|' . $zip . '|' . $radius . '|' . $limit . '|' . $mode );
+		// Unchanged key without a name, so existing cached searches stay valid.
+		$name_part = '' === $name ? '' : '|n:' . ( function_exists( 'mb_strtolower' ) ? mb_strtolower( $name ) : strtolower( $name ) );
+		return 'ffl_bridge_search_v3_' . hash( 'sha256', $key_scope . '|' . $zip . '|' . $radius . '|' . $limit . '|' . $mode . $name_part );
+	}
+
+	/**
+	 * Clean a shopper-entered dealer name filter: plain text, single spaces,
+	 * at most 60 characters. Under 2 characters means no filter.
+	 *
+	 * @param mixed $name Raw name.
+	 * @return string
+	 */
+	public static function sanitize_name_filter( mixed $name ): string {
+		if ( ! is_string( $name ) ) {
+			return '';
+		}
+
+		$name = trim( (string) preg_replace( '/\s+/u', ' ', sanitize_text_field( $name ) ) );
+		$name = function_exists( 'mb_substr' ) ? mb_substr( $name, 0, 60 ) : substr( $name, 0, 60 );
+		$size = function_exists( 'mb_strlen' ) ? mb_strlen( $name ) : strlen( $name );
+		return $size >= 2 ? trim( $name ) : '';
 	}
 
 	/**

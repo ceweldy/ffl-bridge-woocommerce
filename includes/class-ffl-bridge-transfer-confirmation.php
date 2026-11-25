@@ -78,9 +78,15 @@ final class FFL_Bridge_Transfer_Confirmation {
 			'ffl-bridge-admin-order',
 			'fflBridgeAdminOrder',
 			array(
-				'ajaxUrl' => admin_url( 'admin-ajax.php' ),
-				'working' => esc_html__( 'Saving confirmation…', 'ffl-bridge-for-woocommerce' ),
-				'failed'  => esc_html__( 'The confirmation could not be saved.', 'ffl-bridge-for-woocommerce' ),
+				'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
+				'working'     => esc_html__( 'Saving confirmation…', 'ffl-bridge-for-woocommerce' ),
+				'failed'      => esc_html__( 'The confirmation could not be saved.', 'ffl-bridge-for-woocommerce' ),
+				'searching'   => esc_html__( 'Searching…', 'ffl-bridge-for-woocommerce' ),
+				'searchFail'  => esc_html__( 'The dealer search could not be completed.', 'ffl-bridge-for-woocommerce' ),
+				'useDealer'   => esc_html__( 'Use this dealer', 'ffl-bridge-for-woocommerce' ),
+				'saving'      => esc_html__( 'Saving dealer…', 'ffl-bridge-for-woocommerce' ),
+				'saveFail'    => esc_html__( 'The dealer could not be saved.', 'ffl-bridge-for-woocommerce' ),
+				'licenseText' => esc_html__( 'License:', 'ffl-bridge-for-woocommerce' ),
 			)
 		);
 	}
