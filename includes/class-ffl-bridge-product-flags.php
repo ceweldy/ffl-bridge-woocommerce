@@ -59,9 +59,9 @@ final class FFL_Bridge_Product_Flags {
 	/**
 	 * Recompute the index when a flag is added, changed or deleted anywhere.
 	 *
-	 * @param mixed  $meta_id Meta ID or IDs (unused).
-	 * @param mixed  $object_id Post ID (unused).
-	 * @param mixed  $meta_key Meta key.
+	 * @param mixed $meta_id Meta ID or IDs (unused).
+	 * @param mixed $object_id Post ID (unused).
+	 * @param mixed $meta_key Meta key.
 	 * @return void
 	 */
 	public static function on_meta_change( mixed $meta_id, mixed $object_id, mixed $meta_key ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundBeforeLastUsed -- WordPress hook signature.

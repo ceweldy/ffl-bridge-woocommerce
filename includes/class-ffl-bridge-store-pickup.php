@@ -129,7 +129,7 @@ final class FFL_Bridge_Store_Pickup {
 
 		// Saving other settings (or the second sanitize pass of a first save)
 		// keeps the listing found before: nothing to look up again.
-		if ( $license === $previous && '' !== $saved_id && $zip === (string) get_option( self::FOUND_ZIP, '' ) ) {
+		if ( $previous === $license && '' !== $saved_id && (string) get_option( self::FOUND_ZIP, '' ) === $zip ) {
 			return $license;
 		}
 

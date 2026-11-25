@@ -64,7 +64,7 @@ final class FFL_Bridge_Last_Dealer {
 		$pin  = null;
 		foreach ( $dealers as $index => $dealer ) {
 			$dealers[ $index ]['last_used'] = false;
-			if ( null === $pin && '' !== $last && ! empty( $dealer['selectable'] ) && $last === ( $dealer['id'] ?? '' ) ) {
+			if ( null === $pin && '' !== $last && ! empty( $dealer['selectable'] ) && ( $dealer['id'] ?? '' ) === $last ) {
 				$pin = $index;
 			}
 		}
