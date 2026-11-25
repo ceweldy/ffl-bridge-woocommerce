@@ -7,7 +7,8 @@
 
 declare(strict_types=1);
 
-define( 'ABSPATH', dirname( __DIR__ ) . '/' );
+define( 'FFL_BRIDGE_TEST_PLUGIN_DIR', dirname( __DIR__ ) . '/' );
+define( 'ABSPATH', FFL_BRIDGE_TEST_PLUGIN_DIR );
 define( 'FFL_BRIDGE_VERSION', '1.1.0-test' );
 define( 'DAY_IN_SECONDS', 86400 );
 define( 'FFL_BRIDGE_PLUGIN_FILE', '/srv/www/wp-content/plugins/ffl-bridge-for-woocommerce/ffl-bridge.php' );
@@ -68,6 +69,16 @@ class WC_Order {
 	/** @var array<string, string> Billing fields: first_name, last_name, email, phone. */
 	public array $billing = array();
 
+	/** @var array<string, string> Shipping fields: first_name, company, address_1, city, state, postcode, country. */
+	public array $shipping = array();
+
+	/** Customer user ID, 0 for a guest. */
+	public int $customer_id = 0;
+
+	public function get_customer_id(): int {
+		return $this->customer_id;
+	}
+
 	/** @param array<string, mixed> $meta Initial metadata. */
 	public function __construct( private array $meta = array(), private int $id = 501 ) {}
 
@@ -107,17 +118,84 @@ class WC_Order {
 		$this->meta[ $key ] = $value;
 	}
 
+	public function delete_meta_data( string $key ): void {
+		unset( $this->meta[ $key ] );
+	}
+
 	/** @return array<string, mixed> */
 	public function all_meta(): array {
 		return $this->meta;
 	}
 
-	public function add_order_note( string $note ): void {
+	/** Like WooCommerce, an order without an ID (not saved yet) records no note. */
+	public function add_order_note( string $note ): int {
+		if ( 0 === $this->id ) {
+			return 0;
+		}
 		$this->notes[] = $note;
+		return count( $this->notes );
+	}
+
+	/** Simulate the first save giving the order an ID. */
+	public function ffl_test_set_id( int $id ): void {
+		$this->id = $id;
+	}
+
+	/** @var array<int, object> Shipping line items. */
+	public array $shipping_methods = array();
+
+	/** @return array<int, object> */
+	public function get_shipping_methods(): array {
+		return $this->shipping_methods;
 	}
 
 	public function save(): void {
 		++$this->saves;
+	}
+
+	/**
+	 * get_shipping_* and set_shipping_* accessors, plus set_billing_*.
+	 *
+	 * @param array<int, mixed> $args Arguments.
+	 */
+	public function __call( string $name, array $args ): mixed {
+		if ( preg_match( '/\A(get|set)_(shipping|billing)_([a-z0-9_]+)\z/', $name, $parts ) ) {
+			$group = $parts[2];
+			if ( 'set' === $parts[1] ) {
+				$this->{$group}[ $parts[3] ] = (string) $args[0];
+				return null;
+			}
+			return $this->{$group}[ $parts[3] ] ?? '';
+		}
+		throw new BadMethodCallException( $name );
+	}
+}
+
+/** In-memory WC_Customer test double with shipping and billing fields. */
+class FFL_Bridge_Test_Customer {
+	/** @var array<string, string> */
+	public array $shipping = array();
+
+	/** @var array<string, string> */
+	public array $billing = array();
+
+	public int $saves = 0;
+
+	public function save(): void {
+		++$this->saves;
+	}
+
+	/** @param array<int, mixed> $args Arguments. */
+	public function __call( string $name, array $args ): mixed {
+		if ( preg_match( '/\A(get|set)_(shipping|billing)_([a-z0-9_]+)\z/', $name, $parts ) ) {
+			$group = $parts[2];
+			if ( 'set' === $parts[1] ) {
+				$this->{$group}[ $parts[3] ] = (string) $args[0];
+				return null;
+			}
+			return $this->{$group}[ $parts[3] ] ?? '';
+		}
+		throw new BadMethodCallException( $name );
 	}
 }
 
@@ -263,7 +341,13 @@ function update_user_meta( int $user_id, string $key, mixed $value ): bool {
 }
 
 function current_user_can( string $capability, mixed ...$args ): bool {
+	// An object capability such as edit_post for post 100 is granted as "edit_post:100".
+	$capability = array() === $args ? $capability : $capability . ':' . (string) $args[0];
 	return in_array( $capability, $GLOBALS['ffl_bridge_test_caps'], true );
+}
+
+function get_the_ID(): int|false {
+	return $GLOBALS['ffl_bridge_test_current_post_id'] ?? false;
 }
 
 function check_ajax_referer( string $action, string $field = '_wpnonce', bool $stop = true ): bool|int {
@@ -289,7 +373,22 @@ function get_post_type( int $post_id ): string|false {
 }
 
 function get_current_user_id(): int {
-	return 7;
+	return $GLOBALS['ffl_bridge_test_user_id'] ?? 7;
+}
+
+function delete_user_meta( int $user_id, string $key ): bool {
+	$existed = isset( $GLOBALS['ffl_bridge_test_user_meta'][ $user_id ][ $key ] );
+	unset( $GLOBALS['ffl_bridge_test_user_meta'][ $user_id ][ $key ] );
+	return $existed;
+}
+
+function get_user_by( string $field, mixed $value ): object|false {
+	foreach ( $GLOBALS['ffl_bridge_test_users'] ?? array() as $id => $email ) {
+		if ( 'email' === $field && $email === $value ) {
+			return (object) array( 'ID' => $id, 'user_email' => $email );
+		}
+	}
+	return false;
 }
 
 function wp_get_current_user(): object {
@@ -525,17 +624,134 @@ function set_transient( string $key, mixed $value, int $expiration ): bool {
 	return true;
 }
 
-require_once __DIR__ . '/stubs/RouteException.php';
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-api-client.php';
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-network.php';
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-coverage.php';
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-followup.php';
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-transfer-confirmation.php';
-if ( is_readable( dirname( __DIR__ ) . '/includes/class-ffl-bridge-updater.php' ) ) {
-	require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-updater.php';
+$GLOBALS['ffl_bridge_test_post_meta'] = array();
+
+function get_post_meta( int $post_id, string $key = '', bool $single = false ): mixed {
+	$value = $GLOBALS['ffl_bridge_test_post_meta'][ $post_id ][ $key ] ?? null;
+	return null === $value ? ( $single ? '' : array() ) : ( $single ? $value : array( $value ) );
 }
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-selection.php';
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-checkout.php';
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-order.php';
-require_once dirname( __DIR__ ) . '/includes/class-ffl-bridge-settings.php';
+
+function update_post_meta( int $post_id, string $key, mixed $value ): bool {
+	$GLOBALS['ffl_bridge_test_post_meta'][ $post_id ][ $key ] = $value;
+	return true;
+}
+
+function delete_post_meta( int $post_id, string $key ): bool {
+	unset( $GLOBALS['ffl_bridge_test_post_meta'][ $post_id ][ $key ] );
+	return true;
+}
+
+/**
+ * Supports the one query shape the plugin uses: posts with meta_key equal to
+ * meta_value, optionally excluding IDs, returning IDs.
+ *
+ * @param array<string, mixed> $args Query.
+ * @return array<int, int>
+ */
+function get_posts( array $args = array() ): array {
+	$GLOBALS['ffl_bridge_test_post_queries'][] = $args;
+	$ids = array();
+	foreach ( $GLOBALS['ffl_bridge_test_post_meta'] as $post_id => $meta ) {
+		if ( in_array( $post_id, (array) ( $args['exclude'] ?? array() ), true ) ) {
+			continue;
+		}
+		if ( ( $meta[ $args['meta_key'] ?? '' ] ?? null ) === ( $args['meta_value'] ?? null ) ) {
+			$ids[] = (int) $post_id;
+		}
+	}
+	return array_slice( $ids, 0, (int) ( $args['posts_per_page'] ?? 5 ) );
+}
+
+function woocommerce_wp_checkbox( array $field ): void {
+	printf(
+		'<p class="form-field %1$s_field"><label for="%1$s">%2$s</label><input type="checkbox" name="%3$s" id="%1$s" value="yes" %4$s> <span class="description">%5$s</span></p>',
+		esc_attr( $field['id'] ),
+		esc_html( $field['label'] ?? '' ),
+		esc_attr( $field['name'] ?? $field['id'] ),
+		'yes' === ( $field['value'] ?? '' ) ? 'checked' : '',
+		esc_html( $field['description'] ?? '' )
+	);
+}
+
+function checked( mixed $checked, mixed $current = true, bool $display = true ): string {
+	$result = (string) $checked === (string) $current ? " checked='checked'" : '';
+	if ( $display ) {
+		echo $result; // phpcs:ignore
+	}
+	return $result;
+}
+
+/** WC_Product test double with meta. */
+class WC_Product {
+	/** @param array<string, mixed> $meta Meta. */
+	public function __construct( private int $id = 100, public array $meta = array() ) {}
+
+	public function get_id(): int {
+		return $this->id;
+	}
+
+	public function get_meta( string $key ): mixed {
+		return $this->meta[ $key ] ?? '';
+	}
+
+	public function update_meta_data( string $key, mixed $value ): void {
+		$this->meta[ $key ] = $value;
+	}
+
+	public function delete_meta_data( string $key ): void {
+		unset( $this->meta[ $key ] );
+	}
+}
+
+require_once __DIR__ . '/stubs/RouteException.php';
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-api-client.php';
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-network.php';
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-coverage.php';
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-followup.php';
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-transfer-confirmation.php';
+if ( is_readable( FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-updater.php' ) ) {
+	require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-updater.php';
+}
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-selection.php';
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-checkout.php';
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-order.php';
+require_once FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-settings.php';
+// Any other runtime class, except the Checkout Block integration, which needs
+// WooCommerce Blocks interfaces.
+foreach ( glob( FFL_BRIDGE_TEST_PLUGIN_DIR . 'includes/class-ffl-bridge-*.php' ) ?: array() as $ffl_bridge_class_file ) {
+	if ( ! str_ends_with( $ffl_bridge_class_file, 'class-ffl-bridge-blocks-integration.php' ) ) {
+		require_once $ffl_bridge_class_file;
+	}
+}
 require_once __DIR__ . '/TestCase.php';
+require_once __DIR__ . '/DealerFixtures.php';
+
+function esc_attr__( string $text, string $domain = '' ): string {
+	return esc_attr( $text );
+}
+
+/** @param array<string, array<string, bool>> $allowed Allowed tags. */
+function wp_kses( string $html, array $allowed ): string {
+	return strip_tags( $html, array_keys( $allowed ) );
+}
+
+/** WC_Customer loaded by ID: the customer's saved account data. */
+class WC_Customer extends FFL_Bridge_Test_Customer {
+	public function __construct( public int $id = 0 ) {
+		$this->shipping = $GLOBALS['ffl_bridge_test_accounts'][ $id ]['shipping'] ?? array();
+	}
+
+	public function save(): void {
+		parent::save();
+		$GLOBALS['ffl_bridge_test_accounts'][ $this->id ]['shipping'] = $this->shipping;
+	}
+}
+
+function did_action( string $hook ): int {
+	return (int) ( $GLOBALS['ffl_bridge_test_did_actions'][ $hook ] ?? 0 );
+}
+
+function woocommerce_store_api_register_update_callback( array $args ): bool {
+	$GLOBALS['ffl_bridge_test_update_callbacks'][] = $args;
+	return true;
+}
