@@ -67,6 +67,18 @@ final class ApiClientTest extends FFL_Bridge_TestCase {
 		$this->assertFalse( $dealer['is_active'] );
 	}
 
+	public function test_checkout_network_flag_is_strict_and_optional(): void {
+		$verified  = FFL_Bridge_API_Client::normalize_dealer( $this->validDealer( array( 'checkoutEligible' => true ) ) );
+		$directory = FFL_Bridge_API_Client::normalize_dealer( $this->validDealer( array( 'checkoutEligible' => false ) ) );
+		$stringy   = FFL_Bridge_API_Client::normalize_dealer( $this->validDealer( array( 'checkoutEligible' => 'true' ) ) );
+		$legacy    = FFL_Bridge_API_Client::normalize_dealer( $this->validDealer() );
+
+		$this->assertTrue( $verified['checkout_eligible'] );
+		$this->assertFalse( $directory['checkout_eligible'] );
+		$this->assertFalse( $stringy['checkout_eligible'] );
+		$this->assertNull( $legacy['checkout_eligible'] );
+	}
+
 	#[DataProvider( 'invalid_dealer_provider' )]
 	public function test_invalid_or_incomplete_dealer_is_rejected( array $changes ): void {
 		$result = FFL_Bridge_API_Client::normalize_dealer( $this->validDealer( $changes ) );

@@ -3,7 +3,7 @@
  * Plugin Name: FFL Bridge for WooCommerce
  * Plugin URI: https://www.fflbridge.com/woocommerce-ffl-plugin
  * Description: Adds server-verified FFL dealer selection metadata to WooCommerce checkout.
- * Version: 1.1.0
+ * Version: 1.3.0
  * Author: FFL Bridge
  * Author URI: https://www.fflbridge.com
  * License: GPL v2 or later
@@ -14,13 +14,14 @@
  * WC requires at least: 10.8
  * WC tested up to: 10.9
  * Text Domain: ffl-bridge-for-woocommerce
+ * Update URI: https://fflbridge.com/api/plugins/woocommerce/update
  *
  * @package FFL_Bridge_WooCommerce
  */
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FFL_BRIDGE_VERSION', '1.1.0' );
+define( 'FFL_BRIDGE_VERSION', '1.3.0' );
 define( 'FFL_BRIDGE_PLUGIN_FILE', __FILE__ );
 define( 'FFL_BRIDGE_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'FFL_BRIDGE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -44,10 +45,17 @@ add_action( 'before_woocommerce_init', 'ffl_bridge_declare_compatibility' );
 /**
  * Display a dependency notice when WooCommerce is unavailable.
  *
+ * Shown only on the Plugins screen, where the dependency can be fixed.
+ *
  * @return void
  */
 function ffl_bridge_woocommerce_notice(): void {
 	if ( ! current_user_can( 'activate_plugins' ) ) {
+		return;
+	}
+
+	$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+	if ( ! $screen || 'plugins' !== $screen->id ) {
 		return;
 	}
 
@@ -68,18 +76,57 @@ function ffl_bridge_init(): void {
 	}
 
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-api-client.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-network.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-coverage.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-followup.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-transfer-confirmation.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-selection.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-features.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-ship-to-dealer.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-product-flags.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-last-dealer.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-store-pickup.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-settings.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-checkout.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-order.php';
+	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-order-dealer-change.php';
 	require_once FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-blocks-integration.php';
 
 	FFL_Bridge_Settings::init();
 	FFL_Bridge_Checkout::init();
 	FFL_Bridge_Order::init();
+	FFL_Bridge_Order_Dealer_Change::init();
+	FFL_Bridge_Coverage::init();
+	FFL_Bridge_Transfer_Confirmation::init();
+	FFL_Bridge_Network::maybe_migrate();
+	FFL_Bridge_Features::maybe_migrate();
+	FFL_Bridge_Features::init();
+	FFL_Bridge_Ship_To_Dealer::init();
+	FFL_Bridge_Product_Flags::init();
+	FFL_Bridge_Last_Dealer::init();
+	FFL_Bridge_Store_Pickup::init();
 	FFL_Bridge_Blocks_Integration::init();
 }
 add_action( 'plugins_loaded', 'ffl_bridge_init', 20 );
+
+// ffl-bridge:self-hosted-updater:start (the WordPress.org build removes this block).
+/**
+ * Load the self-hosted updater when it is part of this build.
+ *
+ * It loads even without WooCommerce so a store can always update the
+ * plugin. The WordPress.org directory build leaves the file out.
+ *
+ * @return void
+ */
+function ffl_bridge_init_updater(): void {
+	$updater = FFL_BRIDGE_PLUGIN_DIR . 'includes/class-ffl-bridge-updater.php';
+	if ( is_readable( $updater ) ) {
+		require_once $updater;
+		FFL_Bridge_Updater::init();
+	}
+}
+add_action( 'plugins_loaded', 'ffl_bridge_init_updater', 5 );
+// ffl-bridge:self-hosted-updater:end.
 
 /**
  * Add default options without overwriting an existing installation.
@@ -87,10 +134,25 @@ add_action( 'plugins_loaded', 'ffl_bridge_init', 20 );
  * @return void
  */
 function ffl_bridge_activate(): void {
+	// A site that never stored plugin settings is a new install and starts in
+	// hybrid mode. Existing installs are migrated by maybe_migrate() instead.
+	if ( false === get_option( 'ffl_bridge_settings_version', false ) ) {
+		add_option( 'ffl_bridge_dealer_mode', 'hybrid', '', false );
+		// 1.3.0 checkout settings start on for new stores. Existing stores are
+		// offered them by FFL_Bridge_Features::maybe_migrate().
+		add_option( 'ffl_bridge_ship_to_dealer', 'yes', '', false );
+		add_option( 'ffl_bridge_last_dealer_first', 'yes', '', false );
+		add_option( 'ffl_bridge_name_filter', 'yes', '', false );
+	}
+
 	add_option( 'ffl_bridge_api_key', '', '', false );
 	add_option( 'ffl_bridge_theme', 'light', '', false );
 	add_option( 'ffl_bridge_required', 'yes', '', false );
 	add_option( 'ffl_bridge_categories', array(), '', false );
+	add_option( 'ffl_bridge_result_scope', 'all', '', false );
+	add_option( 'ffl_bridge_preferred_licenses', array(), '', false );
+	add_option( 'ffl_bridge_license_email', '', '', false );
+	add_option( 'ffl_bridge_license_fax', '', '', false );
 	add_option( 'ffl_bridge_settings_version', FFL_BRIDGE_VERSION, '', false );
 }
 register_activation_hook( __FILE__, 'ffl_bridge_activate' );
@@ -124,7 +186,15 @@ function ffl_bridge_add_privacy_policy_content(): void {
 		return;
 	}
 
-	$content  = '<p>' . esc_html__( 'When a shopper searches for an FFL dealer, this site sends the search ZIP code, radius, site origin, and technical request metadata to FFL Bridge. The site credential is transmitted server-to-server and is never sent to the shopper\'s browser.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	$content  = '<p>' . esc_html__( 'When a shopper searches for an FFL dealer, this site sends the search ZIP code, radius, any dealer name the shopper typed, site origin, and technical request metadata to FFL Bridge. The site credential is transmitted server-to-server and is never sent to the shopper\'s browser.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	$content .= '<p>' . esc_html__( 'To show store administrators where shoppers could not find a transfer dealer, the plugin stores the first three digits of a searched ZIP code, the search radius, and counts for up to 31 days (30 days per search, kept by day). These records are not linked to a shopper or an order.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	$content .= '<p>' . esc_html__( 'When store staff mark a dealer transfer as confirmed, the plugin sends the dealer identifier, license number, order number, an optional staff note, and an optional copy of the dealer license to FFL Bridge. A license copy uploaded by staff is stored privately with the order.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	if ( class_exists( 'FFL_Bridge_Last_Dealer' ) && FFL_Bridge_Last_Dealer::enabled() ) {
+		$content .= '<p>' . esc_html__( 'For logged-in customers, this site saves the FFL Bridge identifier of the transfer dealer on their last order in their account, to list that dealer first in their next dealer search. It is not sent to FFL Bridge and can be exported or erased with the WordPress personal data tools.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	}
+	if ( class_exists( 'FFL_Bridge_Checkout' ) && FFL_Bridge_Checkout::dealer_notice_enabled() ) {
+		$content .= '<p>' . esc_html__( 'When an order with a selected transfer dealer is placed, this site sends the customer name, email address, order number, and the dealer identifier to FFL Bridge so FFL Bridge can email the dealer about the order.', 'ffl-bridge-for-woocommerce' ) . '</p>';
+	}
 	$content .= '<p>' . wp_kses_post(
 		sprintf(
 			/* translators: 1: privacy-policy URL, 2: terms URL. */
