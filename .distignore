@@ -4,6 +4,7 @@
 .vscode/***
 .wordpress-org/***
 .distignore
+Jenkinsfile
 .editorconfig
 .env*
 .gitattributes
@@ -13,11 +14,13 @@ bin/***
 composer.json
 composer.lock
 dist/***
+docs/***
 node_modules/***
 package.json
 package-lock.json
 phpcs.xml.dist
 phpunit.xml.dist
+phpunit.integration.xml.dist
 tests/***
 vendor/***
 .phpunit.cache/***

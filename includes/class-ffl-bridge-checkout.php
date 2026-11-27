@@ -7,6 +7,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
+use Automattic\WooCommerce\StoreApi\Exceptions\RouteException;
+
 /**
  * Owns the browser-to-session flow and order persistence.
  */
@@ -22,11 +24,73 @@ final class FFL_Bridge_Checkout {
 	private const ORDER_META_SCHEMA = '1';
 
 	/**
+	 * Store setting that asks FFL Bridge to email the selected dealer. Off
+	 * ('no') unless the store turns it on.
+	 */
+	public const DEALER_NOTICE_OPTION = 'ffl_bridge_send_dealer_email';
+
+	/**
+	 * Store setting that shows an optional dealer name box in the picker.
+	 */
+	public const NAME_FILTER_OPTION = 'ffl_bridge_name_filter';
+
+	/**
+	 * Order meta that tracks the dealer notice. pending is the internal marker
+	 * set at checkout, and sending is saved just before FFL Bridge is called;
+	 * after the call it is sent, queued, failed, skipped, or requested (asked,
+	 * but delivery not confirmed, including when FFL Bridge did not answer).
+	 */
+	private const DEALER_NOTICE_META = '_ffl_bridge_dealer_notice';
+
+	/**
+	 * Order meta for the validated reason code FFL Bridge gave for the notice.
+	 */
+	private const DEALER_NOTICE_REASON_META = '_ffl_bridge_dealer_notice_reason';
+
+	/**
+	 * Order meta for the FFL Bridge email log ID of the notice.
+	 */
+	private const DEALER_NOTICE_LOG_META = '_ffl_bridge_dealer_notice_log_id';
+
+	/**
+	 * Order meta for the FFL Bridge order number created for the notice.
+	 */
+	private const DEALER_NOTICE_ORDER_META = '_ffl_bridge_dealer_notice_order';
+
+	/**
+	 * Order meta for the earlier FFL Bridge order whose notice made FFL Bridge
+	 * skip this one (reason already_sent), when FFL Bridge names it.
+	 */
+	private const DEALER_NOTICE_EARLIER_ORDER_META = '_ffl_bridge_dealer_notice_earlier_order';
+
+	/**
+	 * Order meta set to yes when FFL Bridge answered an idempotent replay: it
+	 * already had this same order from an earlier attempt.
+	 */
+	private const DEALER_NOTICE_REPLAY_META = '_ffl_bridge_dealer_notice_replay';
+
+	/**
 	 * Request-local cache of canonical dealer lookups.
 	 *
 	 * @var array<string, array<string, mixed>|WP_Error>
 	 */
 	private static array $verification_cache = array();
+
+	/**
+	 * Order IDs whose dealer notice was handled in this request, so a second
+	 * hook with a stale order object cannot send it twice.
+	 *
+	 * @var array<int, true>
+	 */
+	private static array $notices_handled = array();
+
+	/**
+	 * Notes for orders that have no ID yet (classic checkout saves dealer
+	 * details before the first save, and WooCommerce records no note then).
+	 *
+	 * @var WeakMap<WC_Order, array<int, string>>|null
+	 */
+	private static ?WeakMap $pending_notes = null;
 
 	/**
 	 * Register hooks.
@@ -39,6 +103,9 @@ final class FFL_Bridge_Checkout {
 		add_action( 'woocommerce_checkout_process', array( __CLASS__, 'validate_classic_checkout' ) );
 		add_action( 'woocommerce_checkout_create_order', array( __CLASS__, 'save_classic_order' ), 10, 2 );
 		add_action( 'woocommerce_store_api_checkout_update_order_meta', array( __CLASS__, 'save_store_api_order' ), 10, 1 );
+		add_action( 'woocommerce_checkout_order_created', array( __CLASS__, 'checkout_order_created' ), 5 );
+		add_action( 'woocommerce_checkout_order_processed', array( __CLASS__, 'notify_dealer_classic' ), 20, 3 );
+		add_action( 'woocommerce_store_api_checkout_order_processed', array( __CLASS__, 'notify_dealer' ), 20, 1 );
 		add_action( 'woocommerce_thankyou', array( __CLASS__, 'clear_selection' ), 50 );
 
 		add_action( 'wp_ajax_ffl_bridge_search', array( __CLASS__, 'ajax_search' ) );
@@ -52,8 +119,11 @@ final class FFL_Bridge_Checkout {
 	/**
 	 * Determine whether the current cart contains an applicable product.
 	 *
-	 * Empty category settings intentionally apply the workflow to every cart
-	 * product so a fresh installation fails safely until configured.
+	 * With no categories selected and no product flagged "Requires FFL
+	 * transfer" anywhere, every cart product applies, so a fresh installation
+	 * fails safely until configured. Otherwise a product applies when it or its
+	 * variation is flagged, or it is in a selected category; a selected
+	 * category also covers all of its child categories.
 	 *
 	 * @return bool
 	 */
@@ -64,7 +134,8 @@ final class FFL_Bridge_Checkout {
 
 		$categories = get_option( 'ffl_bridge_categories', array() );
 		$categories = is_array( $categories ) ? array_values( array_filter( array_map( 'absint', $categories ) ) ) : array();
-		if ( empty( $categories ) ) {
+		$flags      = FFL_Bridge_Product_Flags::any_flagged();
+		if ( empty( $categories ) && ! $flags ) {
 			return true;
 		}
 
@@ -74,13 +145,45 @@ final class FFL_Bridge_Checkout {
 				continue;
 			}
 
+			$variation_id = isset( $cart_item['variation_id'] ) ? absint( $cart_item['variation_id'] ) : 0;
+			if ( $flags && FFL_Bridge_Product_Flags::is_flagged( $product_id, $variation_id ) ) {
+				return true;
+			}
+
+			if ( empty( $categories ) ) {
+				continue;
+			}
+
 			$product_categories = wp_get_post_terms( $product_id, 'product_cat', array( 'fields' => 'ids' ) );
-			if ( ! is_wp_error( $product_categories ) && array_intersect( $categories, array_map( 'absint', $product_categories ) ) ) {
+			if ( is_wp_error( $product_categories ) ) {
+				continue;
+			}
+
+			// A selected parent category also covers its child categories, so
+			// a product in Firearms > Rifles applies when Firearms is selected.
+			$covered = array();
+			foreach ( array_map( 'absint', $product_categories ) as $term_id ) {
+				$covered[] = $term_id;
+				foreach ( get_ancestors( $term_id, 'product_cat', 'taxonomy' ) as $ancestor ) {
+					$covered[] = absint( $ancestor );
+				}
+			}
+
+			if ( array_intersect( $categories, $covered ) ) {
 				return true;
 			}
 		}
 
 		return false;
+	}
+
+	/**
+	 * Whether the store shows the optional dealer name box.
+	 *
+	 * @return bool
+	 */
+	public static function name_filter_enabled(): bool {
+		return 'yes' === get_option( self::NAME_FILTER_OPTION, 'no' );
 	}
 
 	/**
@@ -141,6 +244,7 @@ final class FFL_Bridge_Checkout {
 		echo '<p>' . esc_html__( 'Search for a dealer, then contact that dealer to confirm current licensing, transfer acceptance, fees, and shipment instructions.', 'ffl-bridge-for-woocommerce' ) . '</p>';
 		echo '<div class="ffl-bridge-selector" data-ffl-bridge-selector></div>';
 		echo '<noscript><p class="woocommerce-error">' . esc_html__( 'JavaScript is required to select a transfer dealer.', 'ffl-bridge-for-woocommerce' ) . '</p></noscript>';
+		echo FFL_Bridge_Store_Pickup::state_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Fixed markup with a 0 or 1 attribute.
 		echo '</div>';
 	}
 
@@ -163,22 +267,41 @@ final class FFL_Bridge_Checkout {
 			'requestToken' => FFL_Bridge_Selection::get_request_token(),
 			'initialZip'   => self::get_customer_zip(),
 			'selected'     => $dealer,
+			'shipToDealer' => FFL_Bridge_Ship_To_Dealer::applies(),
+			'nameFilter'   => self::name_filter_enabled(),
+			'pickupActive' => FFL_Bridge_Store_Pickup::active(),
+			'storeDealer'  => FFL_Bridge_Store_Pickup::store_dealer(),
+			'shipTo'       => FFL_Bridge_Ship_To_Dealer::current_fields(),
 			'messages'     => array(
-				'heading'       => esc_html__( 'Select a transfer dealer', 'ffl-bridge-for-woocommerce' ),
-				'description'   => esc_html__( 'Search for a dealer, then contact that dealer to confirm current licensing, transfer acceptance, fees, and shipment instructions.', 'ffl-bridge-for-woocommerce' ),
-				'notConfigured' => esc_html__( 'Dealer selection is unavailable because the store connection is not configured. Contact the store before ordering.', 'ffl-bridge-for-woocommerce' ),
-				'zipLabel'      => esc_html__( 'ZIP code', 'ffl-bridge-for-woocommerce' ),
-				'radiusLabel'   => esc_html__( 'Radius', 'ffl-bridge-for-woocommerce' ),
-				'search'        => esc_html__( 'Search dealers', 'ffl-bridge-for-woocommerce' ),
-				'searching'     => esc_html__( 'Searching…', 'ffl-bridge-for-woocommerce' ),
-				'select'        => esc_html__( 'Select dealer', 'ffl-bridge-for-woocommerce' ),
-				'selecting'     => esc_html__( 'Verifying…', 'ffl-bridge-for-woocommerce' ),
-				'clear'         => esc_html__( 'Choose a different dealer', 'ffl-bridge-for-woocommerce' ),
-				'noResults'     => esc_html__( 'No eligible dealers were found in that area.', 'ffl-bridge-for-woocommerce' ),
-				'genericError'  => esc_html__( 'The dealer request could not be completed. Try again.', 'ffl-bridge-for-woocommerce' ),
-				'selectedTitle' => esc_html__( 'Selected transfer dealer', 'ffl-bridge-for-woocommerce' ),
-				'confirmNotice' => esc_html__( 'Selection does not guarantee that the dealer will accept this transfer. Contact the dealer before the order ships.', 'ffl-bridge-for-woocommerce' ),
-				'miles'         => esc_html__( 'miles away', 'ffl-bridge-for-woocommerce' ),
+				'heading'          => esc_html__( 'Select a transfer dealer', 'ffl-bridge-for-woocommerce' ),
+				'description'      => esc_html__( 'Search for a dealer, then contact that dealer to confirm current licensing, transfer acceptance, fees, and shipment instructions.', 'ffl-bridge-for-woocommerce' ),
+				'notConfigured'    => esc_html__( 'Dealer selection is unavailable because the store connection is not configured. Contact the store before ordering.', 'ffl-bridge-for-woocommerce' ),
+				'zipLabel'         => esc_html__( 'ZIP code', 'ffl-bridge-for-woocommerce' ),
+				'radiusLabel'      => esc_html__( 'Radius', 'ffl-bridge-for-woocommerce' ),
+				'nameLabel'        => esc_html__( 'Dealer name (optional)', 'ffl-bridge-for-woocommerce' ),
+				'search'           => esc_html__( 'Search dealers', 'ffl-bridge-for-woocommerce' ),
+				'searching'        => esc_html__( 'Searching…', 'ffl-bridge-for-woocommerce' ),
+				'select'           => esc_html__( 'Select dealer', 'ffl-bridge-for-woocommerce' ),
+				'selecting'        => esc_html__( 'Verifying…', 'ffl-bridge-for-woocommerce' ),
+				'clear'            => esc_html__( 'Choose a different dealer', 'ffl-bridge-for-woocommerce' ),
+				'noResults'        => esc_html__( 'No eligible dealers were found in that area.', 'ffl-bridge-for-woocommerce' ),
+				'genericError'     => esc_html__( 'The dealer request could not be completed. Try again.', 'ffl-bridge-for-woocommerce' ),
+				'selectedTitle'    => esc_html__( 'Selected transfer dealer', 'ffl-bridge-for-woocommerce' ),
+				'confirmNotice'    => esc_html__( 'Selection does not guarantee that the dealer will accept this transfer. Contact the dealer before the order ships.', 'ffl-bridge-for-woocommerce' ),
+				'miles'            => esc_html__( 'miles away', 'ffl-bridge-for-woocommerce' ),
+				'verifiedBadge'    => esc_html__( 'Confirmed transfer dealer', 'ffl-bridge-for-woocommerce' ),
+				'directoryOnly'    => esc_html__( 'Directory listing only', 'ffl-bridge-for-woocommerce' ),
+				'directoryNote'    => esc_html__( 'This dealer is listed in the public FFL directory but is not yet verified for checkout, so it cannot be selected here.', 'ffl-bridge-for-woocommerce' ),
+				'preferred'        => esc_html__( 'Store preferred dealer', 'ffl-bridge-for-woocommerce' ),
+				'lastUsed'         => esc_html__( 'Your last dealer', 'ffl-bridge-for-woocommerce' ),
+				'unconfirmed'      => esc_html__( 'Transfer not confirmed', 'ffl-bridge-for-woocommerce' ),
+				'contactDealer'    => esc_html__( 'This dealer has not confirmed with FFL Bridge that it accepts transfers. You can still choose it.', 'ffl-bridge-for-woocommerce' ),
+				'licenseBadge'     => esc_html__( 'License not verified', 'ffl-bridge-for-woocommerce' ),
+				'licenseNote'      => esc_html__( 'This dealer has confirmed transfers with FFL Bridge, but its license copy is not verified yet.', 'ffl-bridge-for-woocommerce' ),
+				'followUp'         => FFL_Bridge_Followup::instructions( '', 'checkout' ),
+				'pickupTitle'      => esc_html__( 'Transfer dealer for in-store pickup', 'ffl-bridge-for-woocommerce' ),
+				'pickupNote'       => esc_html__( 'You chose in-store pickup, so the store is your transfer dealer. No other dealer is needed.', 'ffl-bridge-for-woocommerce' ),
+				'shipToDealerNote' => esc_html__( 'This order ships to your selected transfer dealer. To change the shipping address, choose a different dealer.', 'ffl-bridge-for-woocommerce' ),
 			),
 		);
 	}
@@ -203,26 +326,167 @@ final class FFL_Bridge_Checkout {
 			self::send_ajax_error( $rate_error, 429 );
 		}
 
-		$zip    = self::post_text( 'zip', 10 );
-		$radius = isset( $_POST['radius'] ) ? absint( wp_unslash( $_POST['radius'] ) ) : 25; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above.
-		$result = FFL_Bridge_API_Client::search( $zip, $radius, 20 );
-		if ( is_wp_error( $result ) ) {
-			self::send_ajax_error( $result );
+		$zip     = self::post_text( 'zip', 10 );
+		$radius  = isset( $_POST['radius'] ) ? absint( wp_unslash( $_POST['radius'] ) ) : 25; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above.
+		$name    = self::name_filter_enabled() ? FFL_Bridge_API_Client::sanitize_name_filter( self::post_text( 'name', 200 ) ) : '';
+		$hybrid  = FFL_Bridge_Network::hybrid_enabled();
+		$primary = FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 20, true, $hybrid, $name );
+		if ( is_wp_error( $primary ) ) {
+			self::send_ajax_error( $primary );
+		}
+
+		// Blocked dealers are removed before outcomes are worked out, so an area
+		// with only blocked dealers is reported as having no confirmed dealer.
+		$primary  = FFL_Bridge_Network::filter_search_result( $primary );
+		$resolved = FFL_Bridge_Network::resolve(
+			$primary,
+			static fn () => FFL_Bridge_Network::filter_search_result( FFL_Bridge_API_Client::search_with_meta( $zip, $radius, 20, false, false, $name ) ),
+			FFL_Bridge_Network::get_result_scope(),
+			FFL_Bridge_Network::get_preferred_licenses(),
+			$hybrid
+		);
+
+		if ( FFL_Bridge_Network::OUTCOME_CONFIRMED !== $resolved['outcome'] ) {
+			FFL_Bridge_Coverage::record_gap( $zip, $radius, FFL_Bridge_Network::OUTCOME_FALLBACK === $resolved['outcome'], $primary['reason'] );
 		}
 
 		$dealers = array();
-		foreach ( $result as $dealer ) {
-			$token = FFL_Bridge_Selection::create( $dealer );
-			if ( is_wp_error( $token ) ) {
-				continue;
+		foreach ( FFL_Bridge_Last_Dealer::pin( $resolved['dealers'] ) as $dealer ) {
+			$public = self::public_dealer( $dealer );
+
+			// Directory-only listings never receive a selection handle, because
+			// FFL Bridge rejects them when the selection is re-verified.
+			if ( $dealer['selectable'] ) {
+				$token = FFL_Bridge_Selection::create( $dealer );
+				if ( is_wp_error( $token ) ) {
+					continue;
+				}
+				$public['selectionToken'] = $token;
 			}
 
-			$public                   = self::public_dealer( $dealer );
-			$public['selectionToken'] = $token;
+			$public['network']        = $dealer['network'];
+			$public['storePreferred'] = $dealer['store_preferred'];
+			$public['lastUsed']       = ! empty( $dealer['last_used'] );
 			$dealers[]                = $public;
 		}
 
-		wp_send_json_success( array( 'dealers' => $dealers ) );
+		wp_send_json_success(
+			array(
+				'dealers' => $dealers,
+				'outcome' => $resolved['outcome'],
+				'notice'  => self::search_notice( $resolved['outcome'], $zip, $radius, self::selection_is_required(), $primary['coverage'], $primary['reason'] ),
+			)
+		);
+	}
+
+	/**
+	 * Build the shopper message for a search without a confirmed dealer.
+	 *
+	 * Coverage counts and the empty-result reason code are used when the API
+	 * sends them, and the message falls back to plain wording when it does
+	 * not. The API's own reason message is not shown to shoppers because it
+	 * is written for integrators and is not translated.
+	 *
+	 * @param string                  $outcome Search outcome.
+	 * @param string                  $zip Searched ZIP code.
+	 * @param int                     $radius Searched radius.
+	 * @param bool                    $required Whether checkout requires a dealer.
+	 * @param array<string, int>|null $coverage Optional API coverage counts.
+	 * @param string                  $reason Optional API zero-result reason.
+	 * @return string
+	 */
+	public static function search_notice( string $outcome, string $zip, int $radius, bool $required, ?array $coverage, string $reason ): string {
+		if ( FFL_Bridge_Network::OUTCOME_CONFIRMED === $outcome ) {
+			return '';
+		}
+
+		$parts = array(
+			sprintf(
+				/* translators: 1: radius in miles, 2: ZIP code. */
+				__( 'No dealers within %1$d miles of %2$s are confirmed to accept transfers.', 'ffl-bridge-for-woocommerce' ),
+				$radius,
+				$zip
+			),
+		);
+
+		$detail = self::coverage_detail( $coverage, $reason );
+		if ( '' !== $detail ) {
+			$parts[] = $detail;
+		}
+
+		if ( FFL_Bridge_Network::OUTCOME_FALLBACK === $outcome ) {
+			$parts[] = __( 'You can still choose one of the nearby licensed dealers below. After you choose, contact the dealer to confirm they will accept the transfer and send the store a copy of their license.', 'ffl-bridge-for-woocommerce' );
+		} else {
+			if ( $radius < max( FFL_Bridge_API_Client::ALLOWED_RADII ) ) {
+				$parts[] = __( 'Try a larger radius.', 'ffl-bridge-for-woocommerce' );
+			}
+			$parts[] = $required
+				? __( 'This order needs a transfer dealer before it can be placed. Contact the store for help arranging one.', 'ffl-bridge-for-woocommerce' )
+				: __( 'You can still place the order. Contact the store to arrange a transfer dealer before it ships.', 'ffl-bridge-for-woocommerce' );
+		}
+
+		$message = implode( ' ', $parts );
+
+		/**
+		 * Filter the shopper message shown when no confirmed dealer is found.
+		 *
+		 * @param string $message Message text. Plain text, escaped on output.
+		 * @param array  $context Outcome, ZIP, radius, required flag, coverage, and reason.
+		 */
+		$filtered = apply_filters(
+			'ffl_bridge_search_notice',
+			$message,
+			array(
+				'outcome'  => $outcome,
+				'zip'      => $zip,
+				'radius'   => $radius,
+				'required' => $required,
+				'coverage' => $coverage,
+				'reason'   => $reason,
+			)
+		);
+
+		return is_string( $filtered ) ? sanitize_text_field( $filtered ) : $message;
+	}
+
+	/**
+	 * Explain a coverage gap from optional API data.
+	 *
+	 * @param array<string, int>|null $coverage Optional API coverage counts.
+	 * @param string                  $reason Optional API zero-result reason.
+	 * @return string
+	 */
+	private static function coverage_detail( ?array $coverage, string $reason ): string {
+		$in_radius = $coverage['dealers_in_radius'] ?? null;
+		$accepting = $coverage['accepting_transfers'] ?? null;
+
+		if ( 0 === $in_radius || ( null === $in_radius && 'NO_DEALERS_IN_RADIUS' === $reason ) ) {
+			return __( 'FFL Bridge lists no licensed dealers in this area.', 'ffl-bridge-for-woocommerce' );
+		}
+
+		if ( null !== $in_radius && 0 === $accepting ) {
+			return sprintf(
+				/* translators: %d: number of licensed dealers in the search area. */
+				_n(
+					'FFL Bridge lists %d licensed dealer in this area, but it is not confirmed to accept transfers yet.',
+					'FFL Bridge lists %d licensed dealers in this area, but none are confirmed to accept transfers yet.',
+					$in_radius,
+					'ffl-bridge-for-woocommerce'
+				),
+				$in_radius
+			);
+		}
+
+		$verified = $coverage['checkout_eligible'] ?? null;
+		if ( ( null !== $accepting && $accepting > 0 && 0 === $verified ) || 'NO_VERIFIED_CHECKOUT_DEALERS_IN_RADIUS' === $reason ) {
+			return __( 'Dealers in this area accept transfers, but none are verified for checkout yet.', 'ffl-bridge-for-woocommerce' );
+		}
+
+		if ( 'NO_TRANSFER_CONFIRMED_DEALERS_IN_RADIUS' === $reason ) {
+			return __( 'Licensed dealers are listed in this area, but none are confirmed to accept transfers yet.', 'ffl-bridge-for-woocommerce' );
+		}
+
+		return '';
 	}
 
 	/**
@@ -247,13 +511,18 @@ final class FFL_Bridge_Checkout {
 			self::send_ajax_error( $payload, 400 );
 		}
 
-		$dealer = FFL_Bridge_API_Client::get_dealer( $payload['id'] );
+		$allow_unconfirmed = ! empty( $payload['fb'] ) && FFL_Bridge_Network::hybrid_enabled();
+		$dealer            = FFL_Bridge_API_Client::get_dealer( $payload['id'], $allow_unconfirmed );
 		if ( is_wp_error( $dealer ) ) {
 			self::send_ajax_error( $dealer );
 		}
 
-		if ( ! hash_equals( $payload['lic'], $dealer['license'] ) || empty( $dealer['accepts_transfers'] ) || empty( $dealer['is_active'] ) ) {
+		if ( ! hash_equals( $payload['lic'], $dealer['license'] ) || ! self::dealer_still_acceptable( $dealer ) ) {
 			self::send_ajax_error( new WP_Error( 'ffl_bridge_dealer_unavailable', __( 'That dealer is not currently selectable. Choose another dealer or contact the store.', 'ffl-bridge-for-woocommerce' ) ), 409 );
+		}
+
+		if ( FFL_Bridge_Network::is_blocked( $dealer['license'] ) ) {
+			self::send_ajax_error( self::blocked_error(), 409 );
 		}
 
 		$cart_hash = FFL_Bridge_Selection::get_cart_hash();
@@ -277,7 +546,10 @@ final class FFL_Bridge_Checkout {
 		wp_send_json_success(
 			array(
 				'dealer'  => self::public_dealer( $dealer ),
-				'message' => esc_html__( 'Dealer selected and verified for this cart.', 'ffl-bridge-for-woocommerce' ),
+				'shipTo'  => FFL_Bridge_Ship_To_Dealer::on_select( $dealer ),
+				'message' => 'verified' === FFL_Bridge_Network::follow_up_state( $dealer )
+					? esc_html__( 'Dealer selected and verified for this cart.', 'ffl-bridge-for-woocommerce' )
+					: esc_html__( 'Dealer selected. Follow the steps below to confirm the transfer.', 'ffl-bridge-for-woocommerce' ),
 			)
 		);
 	}
@@ -293,8 +565,15 @@ final class FFL_Bridge_Checkout {
 			self::send_ajax_error( $error );
 		}
 
+		$restore = FFL_Bridge_Ship_To_Dealer::restore_customer();
 		self::clear_selection();
-		wp_send_json_success( array( 'message' => esc_html__( 'Dealer selection cleared.', 'ffl-bridge-for-woocommerce' ) ) );
+		wp_send_json_success(
+			array(
+				'message' => esc_html__( 'Dealer selection cleared.', 'ffl-bridge-for-woocommerce' ),
+				'shipTo'  => null,
+				'restore' => $restore,
+			)
+		);
 	}
 
 	/**
@@ -325,6 +604,7 @@ final class FFL_Bridge_Checkout {
 
 		if ( is_array( $result ) ) {
 			self::persist_order_selection( $order, $result );
+			FFL_Bridge_Ship_To_Dealer::apply_to_order( $order, $result );
 		}
 	}
 
@@ -332,15 +612,23 @@ final class FFL_Bridge_Checkout {
 	 * Validate and save metadata for Checkout Blocks / Store API orders.
 	 *
 	 * Throwing here causes the Store API checkout to fail with the message,
-	 * instead of accepting client-supplied extension data.
+	 * instead of accepting client-supplied extension data. A RouteException
+	 * makes the Store API answer 400 with the error code and message, which
+	 * the Checkout Block shows as an error notice. A plain Exception would
+	 * become a 500 woocommerce_rest_unknown_server_error.
 	 *
 	 * @param WC_Order $order Store API order.
-	 * @throws Exception If a required or selected dealer cannot be verified.
+	 * @throws RouteException If a required or selected dealer cannot be verified.
+	 * @throws Exception If that class is missing and a dealer cannot be verified.
 	 * @return void
 	 */
 	public static function save_store_api_order( WC_Order $order ): void {
 		$result = self::verify_selection_for_checkout();
 		if ( is_wp_error( $result ) ) {
+			if ( class_exists( RouteException::class ) ) {
+				throw new RouteException( esc_html( $result->get_error_code() ), esc_html( $result->get_error_message() ), 400 );
+			}
+
 			throw new Exception( esc_html( $result->get_error_message() ) );
 		}
 
@@ -388,7 +676,21 @@ final class FFL_Bridge_Checkout {
 	public static function clear_selection( mixed $unused = null ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		if ( function_exists( 'WC' ) && WC()->session ) {
 			WC()->session->__unset( self::SESSION_KEY );
+			// A dealer address that replaced the shopper's goes back, including
+			// after the order, so a saved account address is not left as the dealer.
+			FFL_Bridge_Ship_To_Dealer::restore_customer();
 		}
+	}
+
+	/**
+	 * The current selection re-checked against FFL Bridge for this request.
+	 *
+	 * Null when the cart needs no dealer or an optional one was not chosen.
+	 *
+	 * @return array<string, mixed>|WP_Error|null
+	 */
+	public static function verified_dealer(): array|WP_Error|null {
+		return self::verify_selection_for_checkout();
 	}
 
 	/**
@@ -401,6 +703,12 @@ final class FFL_Bridge_Checkout {
 	private static function verify_selection_for_checkout(): array|WP_Error|null {
 		if ( ! self::cart_requires_ffl() ) {
 			return null;
+		}
+
+		// In-store pickup: the store's own record, fetched again from FFL Bridge,
+		// is the dealer, whatever the shopper chose before picking pickup.
+		if ( FFL_Bridge_Store_Pickup::active() ) {
+			return self::verify_store_pickup_dealer();
 		}
 
 		$required  = self::selection_is_required();
@@ -417,21 +725,103 @@ final class FFL_Bridge_Checkout {
 			return new WP_Error( 'ffl_bridge_invalid_selection', __( 'The saved dealer selection is invalid. Choose the dealer again.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		if ( ! array_key_exists( $id, self::$verification_cache ) ) {
-			self::$verification_cache[ $id ] = FFL_Bridge_API_Client::get_dealer( $id );
+		// A hybrid selection stays valid only while the store keeps hybrid mode
+		// on. Selections from 1.1.0 have no flag and are verified network ones.
+		$unconfirmed = ! self::is_verified_selection( $stored );
+		if ( $unconfirmed && ! FFL_Bridge_Network::hybrid_enabled() ) {
+			return new WP_Error( 'ffl_bridge_fallback_disabled', __( 'The selected dealer is not confirmed to accept transfers. Search and select a confirmed dealer, or contact the store.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
-		$dealer = self::$verification_cache[ $id ];
+		$cache_key = $id . ( $unconfirmed ? '|unconfirmed' : '' );
+		if ( ! array_key_exists( $cache_key, self::$verification_cache ) ) {
+			self::$verification_cache[ $cache_key ] = FFL_Bridge_API_Client::get_dealer( $id, $unconfirmed );
+		}
+
+		$dealer = self::$verification_cache[ $cache_key ];
 		if ( is_wp_error( $dealer ) ) {
 			return $dealer;
 		}
 
 		$stored_license = isset( $stored['license'] ) && is_string( $stored['license'] ) ? $stored['license'] : '';
-		if ( '' === $stored_license || ! hash_equals( $stored_license, $dealer['license'] ) || empty( $dealer['accepts_transfers'] ) || empty( $dealer['is_active'] ) ) {
+		if ( '' === $stored_license || ! hash_equals( $stored_license, $dealer['license'] ) || ! self::dealer_still_acceptable( $dealer ) ) {
 			return new WP_Error( 'ffl_bridge_dealer_changed', __( 'The selected dealer can no longer be verified. Search and select a dealer again.', 'ffl-bridge-for-woocommerce' ) );
 		}
 
+		if ( FFL_Bridge_Network::is_blocked( $dealer['license'] ) ) {
+			return self::blocked_error();
+		}
+
 		return $dealer;
+	}
+
+	/**
+	 * Re-check the store's own dealer record for an in-store pickup order.
+	 *
+	 * @return array<string, mixed>|WP_Error
+	 */
+	private static function verify_store_pickup_dealer(): array|WP_Error {
+		$id        = FFL_Bridge_Store_Pickup::store_dealer_id();
+		$cache_key = 'store|' . $id;
+		if ( ! array_key_exists( $cache_key, self::$verification_cache ) ) {
+			self::$verification_cache[ $cache_key ] = FFL_Bridge_API_Client::get_dealer( $id, true );
+		}
+
+		$dealer = self::$verification_cache[ $cache_key ];
+		if ( is_wp_error( $dealer ) || empty( $dealer['is_active'] ) ) {
+			return new WP_Error( 'ffl_bridge_store_pickup_unavailable', __( 'In-store pickup is not available for this order right now. Choose another shipping method and select a transfer dealer, or contact the store.', 'ffl-bridge-for-woocommerce' ) );
+		}
+
+		$dealer['store_pickup'] = true;
+		return $dealer;
+	}
+
+	/**
+	 * The error for a dealer on the store blocklist.
+	 *
+	 * @return WP_Error
+	 */
+	private static function blocked_error(): WP_Error {
+		return new WP_Error( 'ffl_bridge_dealer_blocked', __( 'That dealer is not available for orders from this store. Choose another dealer.', 'ffl-bridge-for-woocommerce' ) );
+	}
+
+	/**
+	 * Determine whether a dealer array is a verified checkout network one.
+	 *
+	 * Dealers from 1.1.0 sessions have no flag and were always verified.
+	 * Sessions from the unreleased fallback used transfer_confirmed for the
+	 * same meaning, so that key is honored when checkout_verified is absent.
+	 *
+	 * @param array<string, mixed> $dealer Dealer array.
+	 * @return bool
+	 */
+	public static function is_verified_selection( array $dealer ): bool {
+		if ( array_key_exists( 'checkout_verified', $dealer ) ) {
+			return ! empty( $dealer['checkout_verified'] );
+		}
+
+		return false !== ( $dealer['transfer_confirmed'] ?? true );
+	}
+
+	/**
+	 * Check the canonical dealer flags that must hold for a selection.
+	 *
+	 * Every dealer must still be active. A verified network dealer must also
+	 * still accept transfers; a hybrid dealer may not have confirmed yet, but
+	 * one that has declined transfers is rejected.
+	 *
+	 * @param array<string, mixed> $dealer Canonical dealer.
+	 * @return bool
+	 */
+	public static function dealer_still_acceptable( array $dealer ): bool {
+		if ( empty( $dealer['is_active'] ) ) {
+			return false;
+		}
+
+		if ( ! self::is_verified_selection( $dealer ) && 'declined' === ( $dealer['transfer_status'] ?? null ) ) {
+			return false;
+		}
+
+		return ! self::is_verified_selection( $dealer ) || ! empty( $dealer['accepts_transfers'] );
 	}
 
 	/**
@@ -442,40 +832,418 @@ final class FFL_Bridge_Checkout {
 	 * @return void
 	 */
 	private static function persist_order_selection( WC_Order $order, array $dealer ): void {
-		if ( '' !== (string) $order->get_meta( '_ffl_bridge_dealer_id' ) ) {
+		// Saved once per dealer: a second hook for the same order adds nothing,
+		// but a different re-checked dealer (for example after the shopper
+		// switched to in-store pickup) replaces the earlier one.
+		if ( $dealer['id'] === (string) $order->get_meta( '_ffl_bridge_dealer_id' ) ) {
 			return;
 		}
 
-		$meta = array(
-			'_ffl_bridge_dealer_id'        => $dealer['id'],
-			'_ffl_bridge_license'          => $dealer['license'],
-			'_ffl_bridge_license_type'     => $dealer['license_type'],
-			'_ffl_bridge_name'             => $dealer['name'],
-			'_ffl_bridge_business_name'    => $dealer['business_name'],
-			'_ffl_bridge_address'          => $dealer['address'],
-			'_ffl_bridge_city'             => $dealer['city'],
-			'_ffl_bridge_state'            => $dealer['state'],
-			'_ffl_bridge_zip'              => $dealer['zip'],
-			'_ffl_bridge_phone'            => $dealer['phone'],
-			'_ffl_bridge_license_on_file'  => ! empty( $dealer['license_on_file'] ) ? 'yes' : 'no',
-			'_ffl_bridge_license_verified' => ! empty( $dealer['license_verified'] ) ? 'yes' : 'no',
-			'_ffl_bridge_verified_at'      => gmdate( 'c' ),
-			'_ffl_bridge_source'           => 'ffl_bridge_api',
-			'_ffl_bridge_schema'           => self::ORDER_META_SCHEMA,
+		self::write_dealer_meta( $order, $dealer );
+		$order->update_meta_data( '_ffl_bridge_store_pickup', ! empty( $dealer['store_pickup'] ) ? 'yes' : 'no' );
+
+		// The notice is sent later, once the order is saved and has a number.
+		// Nothing is pending, and nothing about the shopper leaves the site,
+		// unless the store turned the dealer notice on.
+		if ( self::dealer_notice_enabled() ) {
+			$order->update_meta_data( self::DEALER_NOTICE_META, 'pending' );
+		}
+
+		self::add_note( $order, self::selection_note( $dealer ) );
+		if ( ! empty( $dealer['store_pickup'] ) ) {
+			self::add_note( $order, __( 'In-store pickup: the store\'s own FFL was saved as the transfer dealer.', 'ffl-bridge-for-woocommerce' ) );
+			return;
+		}
+		FFL_Bridge_Last_Dealer::remember( $order, $dealer );
+	}
+
+	/**
+	 * Add an order note now, or once the order is first saved.
+	 *
+	 * @param WC_Order $order Order.
+	 * @param string   $note Note.
+	 * @return void
+	 */
+	public static function add_note( WC_Order $order, string $note ): void {
+		if ( (int) $order->get_id() > 0 ) {
+			$order->add_order_note( $note );
+			return;
+		}
+
+		self::$pending_notes         ??= new WeakMap();
+		$notes                         = self::$pending_notes[ $order ] ?? array();
+		$notes[]                       = $note;
+		self::$pending_notes[ $order ] = $notes;
+	}
+
+	/**
+	 * Classic checkout, after the first order save: add the notes held for
+	 * this order and put the customer's account address back.
+	 *
+	 * @param mixed $order New order.
+	 * @return void
+	 */
+	public static function checkout_order_created( mixed $order ): void {
+		if ( ! $order instanceof WC_Order ) {
+			return;
+		}
+
+		if ( null !== self::$pending_notes && isset( self::$pending_notes[ $order ] ) ) {
+			$notes = self::$pending_notes[ $order ];
+			unset( self::$pending_notes[ $order ] );
+			foreach ( $notes as $note ) {
+				$order->add_order_note( $note );
+			}
+		}
+
+		FFL_Bridge_Ship_To_Dealer::restore_account( $order );
+	}
+
+	/**
+	 * Write the namespaced dealer metadata allowlist from a canonical dealer.
+	 *
+	 * Used at checkout and when store staff change the dealer on an order.
+	 *
+	 * @param WC_Order             $order Order object.
+	 * @param array<string, mixed> $dealer Canonical dealer from FFL Bridge.
+	 * @return void
+	 */
+	public static function write_dealer_meta( WC_Order $order, array $dealer ): void {
+		$meta = array_merge(
+			array(
+				'_ffl_bridge_dealer_id'       => $dealer['id'],
+				'_ffl_bridge_license'         => $dealer['license'],
+				'_ffl_bridge_license_type'    => $dealer['license_type'],
+				'_ffl_bridge_name'            => $dealer['name'],
+				'_ffl_bridge_business_name'   => $dealer['business_name'],
+				'_ffl_bridge_address'         => $dealer['address'],
+				'_ffl_bridge_city'            => $dealer['city'],
+				'_ffl_bridge_state'           => $dealer['state'],
+				'_ffl_bridge_zip'             => $dealer['zip'],
+				'_ffl_bridge_phone'           => $dealer['phone'],
+				'_ffl_bridge_license_on_file' => ! empty( $dealer['license_on_file'] ) ? 'yes' : 'no',
+				'_ffl_bridge_verified_at'     => gmdate( 'c' ),
+				'_ffl_bridge_source'          => 'ffl_bridge_api',
+				'_ffl_bridge_schema'          => self::ORDER_META_SCHEMA,
+			),
+			self::status_meta( $dealer )
 		);
 
 		foreach ( $meta as $key => $value ) {
 			$order->update_meta_data( $key, $value );
 		}
+	}
 
-		$order->add_order_note(
-			sprintf(
-				/* translators: 1: dealer name, 2: license number. */
-				__( 'FFL Bridge recorded a server-verified dealer selection: %1$s (%2$s). Confirm licensing, acceptance, fees, and shipment instructions before fulfillment.', 'ffl-bridge-for-woocommerce' ),
-				$dealer['name'],
-				$dealer['license']
+	/**
+	 * Determine whether the store asked FFL Bridge to email selected dealers.
+	 *
+	 * @return bool
+	 */
+	public static function dealer_notice_enabled(): bool {
+		return 'yes' === get_option( self::DEALER_NOTICE_OPTION, 'no' );
+	}
+
+	/**
+	 * Classic checkout: send a pending dealer notice after the order is saved.
+	 *
+	 * @param mixed $order_id Order ID.
+	 * @param mixed $posted_data Posted checkout data.
+	 * @param mixed $order Order object.
+	 * @return void
+	 */
+	public static function notify_dealer_classic( mixed $order_id = null, mixed $posted_data = null, mixed $order = null ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundBeforeLastUsed -- WooCommerce hook signature.
+		if ( ! $order instanceof WC_Order && function_exists( 'wc_get_order' ) && is_numeric( $order_id ) ) {
+			$order = wc_get_order( absint( $order_id ) );
+		}
+
+		if ( $order instanceof WC_Order ) {
+			self::notify_dealer( $order );
+		}
+	}
+
+	/**
+	 * Send a pending dealer notice through FFL Bridge.
+	 *
+	 * Runs after the order is saved, on both checkouts. Only an order whose
+	 * verified dealer was saved by this plugin at checkout while the setting
+	 * was on is pending, and the notice is sent at most once: any other status,
+	 * including a legacy pre-call queued marker from an older version, or a
+	 * recorded FFL Bridge order number, means it was already handled. It is skipped
+	 * when the setting has since been turned off. A failure is logged and
+	 * noted on the order, and never fails or rolls back the order.
+	 *
+	 * @param WC_Order $order Saved order.
+	 * @return void
+	 */
+	public static function notify_dealer( WC_Order $order ): void {
+		try {
+			$order_id = (int) $order->get_id();
+			if (
+				'pending' !== $order->get_meta( self::DEALER_NOTICE_META ) ||
+				'' !== (string) $order->get_meta( self::DEALER_NOTICE_ORDER_META ) ||
+				( $order_id > 0 && isset( self::$notices_handled[ $order_id ] ) )
+			) {
+				return;
+			}
+
+			if ( $order_id > 0 ) {
+				self::$notices_handled[ $order_id ] = true;
+			}
+
+			if ( ! self::dealer_notice_enabled() ) {
+				self::finish_dealer_notice( $order, 'skipped', '' );
+				return;
+			}
+
+			$dealer_id = (string) $order->get_meta( '_ffl_bridge_dealer_id' );
+			$name      = trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
+			$email     = $order->get_billing_email();
+			$reference = (string) $order->get_order_number();
+			if ( '' === $dealer_id || '' === $name || '' === $reference || ! is_email( $email ) || ! FFL_Bridge_API_Client::is_configured() ) {
+				self::finish_dealer_notice( $order, 'skipped', __( 'FFL Bridge was not asked to email the dealer because the order or the API key is missing details.', 'ffl-bridge-for-woocommerce' ) );
+				return;
+			}
+
+			// Saved before the call, so a hook fired again later, even after this
+			// request died mid-call, never posts a second FFL Bridge order.
+			$order->update_meta_data( self::DEALER_NOTICE_META, 'sending' );
+			$order->save();
+
+			$result = FFL_Bridge_API_Client::create_order(
+				array(
+					'fflId'           => $dealer_id,
+					'customerName'    => $name,
+					'customerEmail'   => $email,
+					'externalOrderId' => $reference,
+					'orderKey'        => self::order_key( $order ),
+				)
+			);
+		} catch ( Throwable $error ) {
+			$result = new WP_Error( 'ffl_bridge_order_failed', get_class( $error ) );
+		}
+
+		if ( is_wp_error( $result ) ) {
+			self::log_notice_failure( $result->get_error_code() );
+			self::finish_dealer_notice( $order, 'failed', __( 'FFL Bridge could not be asked to email the dealer. The order is not affected. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' ) );
+			return;
+		}
+
+		$status  = in_array( $result['notice_status'] ?? '', array( 'sent', 'queued', 'failed', 'skipped', 'requested' ), true ) ? $result['notice_status'] : 'requested';
+		$reason  = (string) ( $result['reason'] ?? '' );
+		$earlier = (string) ( $result['existing_order_number'] ?? '' );
+		$replay  = true === ( $result['replay'] ?? false );
+		$number  = (string) ( $result['order_number'] ?? '' );
+		$note    = $replay
+			? self::replay_note( $number, (string) ( $result['existing_status'] ?? '' ) )
+			: self::dealer_notice_note( $status, $reason, $earlier );
+		self::finish_dealer_notice(
+			$order,
+			$status,
+			$note,
+			array(
+				self::DEALER_NOTICE_REASON_META        => $reason,
+				self::DEALER_NOTICE_LOG_META           => (string) ( $result['log_id'] ?? '' ),
+				self::DEALER_NOTICE_ORDER_META         => $number,
+				self::DEALER_NOTICE_EARLIER_ORDER_META => $earlier,
+				self::DEALER_NOTICE_REPLAY_META        => $replay ? 'yes' : '',
 			)
 		);
+	}
+
+	/**
+	 * Build the order note for an idempotent replay: FFL Bridge already had this
+	 * same order from an earlier attempt, so it sent no second email.
+	 *
+	 * @param string $number Validated FFL Bridge order number, or empty.
+	 * @param string $existing_status sent, queued, or empty when FFL Bridge did not say.
+	 * @return string
+	 */
+	private static function replay_note( string $number, string $existing_status ): string {
+		if ( '' === $number ) {
+			switch ( $existing_status ) {
+				case 'sent':
+					return __( 'FFL Bridge already had this order from an earlier attempt and had already emailed the dealer about it, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+				case 'queued':
+					return __( 'FFL Bridge already had this order from an earlier attempt and is still holding that email for review, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+				default:
+					return __( 'FFL Bridge already had this order from an earlier attempt, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+			}
+		}
+
+		switch ( $existing_status ) {
+			case 'sent':
+				/* translators: %s: the FFL Bridge order number, for example ORD-QW7VZYHJQW. */
+				$text = __( 'FFL Bridge already had this order (FFL Bridge order %s) from an earlier attempt and had already emailed the dealer about it, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+				break;
+			case 'queued':
+				/* translators: %s: the FFL Bridge order number, for example ORD-QW7VZYHJQW. */
+				$text = __( 'FFL Bridge already had this order (FFL Bridge order %s) from an earlier attempt and is still holding that email for review, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+				break;
+			default:
+				/* translators: %s: the FFL Bridge order number, for example ORD-QW7VZYHJQW. */
+				$text = __( 'FFL Bridge already had this order (FFL Bridge order %s) from an earlier attempt, so no second email was sent.', 'ffl-bridge-for-woocommerce' );
+		}
+
+		return sprintf( $text, $number );
+	}
+
+	/**
+	 * Build the per-site, per-order key sent to FFL Bridge with the notice.
+	 *
+	 * A hash of the site's home URL, the order ID and the order's GMT creation
+	 * time, so a staging clone or a reset site that reuses an order number
+	 * gets a different key. It contains no shopper data.
+	 *
+	 * @param WC_Order $order Saved order.
+	 * @return string
+	 */
+	public static function order_key( WC_Order $order ): string {
+		$created = $order->get_date_created();
+		$created = null === $created ? '' : gmdate( 'c', $created->getTimestamp() );
+
+		return 'wc1-' . substr( hash( 'sha256', home_url( '/' ) . '|' . (int) $order->get_id() . '|' . $created ), 0, 40 );
+	}
+
+	/**
+	 * Build the order note for a dealer notice outcome reported by FFL Bridge.
+	 *
+	 * @param string $status sent, queued, failed, skipped, or requested.
+	 * @param string $reason Validated reason code, or empty.
+	 * @param string $earlier Validated earlier FFL Bridge order number, or empty.
+	 * @return string
+	 */
+	private static function dealer_notice_note( string $status, string $reason, string $earlier = '' ): string {
+		switch ( $status ) {
+			case 'sent':
+				return __( 'FFL Bridge emailed the selected dealer about this order.', 'ffl-bridge-for-woocommerce' );
+			case 'queued':
+				return __( 'FFL Bridge accepted the dealer email but is holding it for review, so it has not been confirmed as sent. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' );
+			case 'failed':
+				return __( 'FFL Bridge could not email the selected dealer. The order is not affected. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' );
+			case 'skipped':
+				if ( 'already_sent' === $reason ) {
+					if ( '' !== $earlier ) {
+						return sprintf(
+							/* translators: %s: the earlier FFL Bridge order number, for example ORD-1QZKZISGCP. */
+							__( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number (FFL Bridge order %s). Contact the dealer directly if this is a different order.', 'ffl-bridge-for-woocommerce' ),
+							$earlier
+						);
+					}
+
+					return __( 'FFL Bridge did not email the dealer about this order: it already emailed this dealer about an earlier order with the same order number. Contact the dealer directly if this is a different order.', 'ffl-bridge-for-woocommerce' );
+				}
+
+				$reasons = array(
+					'email_opted_out'              => __( 'the dealer opted out of these emails', 'ffl-bridge-for-woocommerce' ),
+					'listing_opted_out'            => __( 'the dealer hid its listing', 'ffl-bridge-for-woocommerce' ),
+					'no_email_on_file'             => __( 'no dealer email is on file', 'ffl-bridge-for-woocommerce' ),
+					'email_suppressed'             => __( "the dealer's email address is suppressed", 'ffl-bridge-for-woocommerce' ),
+					'disabled'                     => __( 'dealer emails are turned off at FFL Bridge', 'ffl-bridge-for-woocommerce' ),
+					'company_address_missing'      => __( 'FFL Bridge could not prepare the email', 'ffl-bridge-for-woocommerce' ),
+					'preference_links_unavailable' => __( 'FFL Bridge could not prepare the email', 'ffl-bridge-for-woocommerce' ),
+					'not_requested'                => __( 'the email was not requested', 'ffl-bridge-for-woocommerce' ),
+				);
+
+				return sprintf(
+					/* translators: %s: why FFL Bridge did not email the dealer, for example "no dealer email is on file". */
+					__( 'FFL Bridge did not email the dealer: %s. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' ),
+					$reasons[ $reason ] ?? __( 'it was skipped', 'ffl-bridge-for-woocommerce' )
+				);
+			default:
+				if ( 'no_response' === $reason ) {
+					return __( 'FFL Bridge was asked to email the selected dealer but did not answer in time, so delivery could not be confirmed. Contact the dealer directly if needed.', 'ffl-bridge-for-woocommerce' );
+				}
+
+				return __( 'FFL Bridge was asked to email the selected dealer. Delivery was not confirmed.', 'ffl-bridge-for-woocommerce' );
+		}
+	}
+
+	/**
+	 * Record the dealer notice outcome on the order without ever throwing.
+	 *
+	 * @param WC_Order              $order Order.
+	 * @param string                $status sent, queued, failed, skipped, or requested.
+	 * @param string                $note Optional order note.
+	 * @param array<string, string> $extra Optional validated meta; empty values are not stored.
+	 * @return void
+	 */
+	private static function finish_dealer_notice( WC_Order $order, string $status, string $note, array $extra = array() ): void {
+		try {
+			$order->update_meta_data( self::DEALER_NOTICE_META, $status );
+			foreach ( $extra as $key => $value ) {
+				if ( '' !== $value ) {
+					$order->update_meta_data( $key, $value );
+				}
+			}
+			if ( '' !== $note ) {
+				$order->add_order_note( $note );
+			}
+			$order->save();
+		} catch ( Throwable $error ) {
+			self::log_notice_failure( 'ffl_bridge_order_meta_failed' );
+		}
+	}
+
+	/**
+	 * Log a dealer notice failure without shopper data.
+	 *
+	 * @param string $code Error code.
+	 * @return void
+	 */
+	private static function log_notice_failure( string $code ): void {
+		if ( function_exists( 'wc_get_logger' ) ) {
+			wc_get_logger()->log(
+				'warning',
+				'Dealer notice was not sent.',
+				array(
+					'source' => 'ffl-bridge-for-woocommerce',
+					'reason' => $code,
+				)
+			);
+		}
+	}
+
+	/**
+	 * Build the order metadata that describes a selection's status.
+	 *
+	 * Transfer acceptance, license verification, and the basis on which the
+	 * shopper was allowed to select the dealer are stored separately so a
+	 * dealer with confirmed transfers but no verified license copy is never
+	 * shown as unconfirmed for transfers.
+	 *
+	 * @param array<string, mixed> $dealer Canonical dealer.
+	 * @return array<string, string>
+	 */
+	public static function status_meta( array $dealer ): array {
+		$verified = self::is_verified_selection( $dealer );
+
+		return array(
+			'_ffl_bridge_transfer_status'  => $verified || ! empty( $dealer['transfer_confirmed'] ) ? 'confirmed' : 'unconfirmed',
+			'_ffl_bridge_license_verified' => ! empty( $dealer['license_verified'] ) || ( $verified && ! array_key_exists( 'license_verified', $dealer ) ) ? 'yes' : 'no',
+			'_ffl_bridge_selection_basis'  => $verified ? FFL_Bridge_Network::SELECTION_NETWORK : FFL_Bridge_Network::SELECTION_HYBRID,
+		);
+	}
+
+	/**
+	 * Build the order note recorded when a dealer is saved on an order.
+	 *
+	 * @param array<string, mixed> $dealer Canonical dealer.
+	 * @return string
+	 */
+	public static function selection_note( array $dealer ): string {
+		$meta = self::status_meta( $dealer );
+		if ( FFL_Bridge_Network::SELECTION_NETWORK === $meta['_ffl_bridge_selection_basis'] ) {
+			/* translators: 1: dealer name, 2: license number. */
+			$note = __( 'FFL Bridge recorded a server-verified dealer selection: %1$s (%2$s). Confirm licensing, acceptance, fees, and shipment instructions before fulfillment.', 'ffl-bridge-for-woocommerce' );
+		} elseif ( 'confirmed' === $meta['_ffl_bridge_transfer_status'] ) {
+			/* translators: 1: dealer name, 2: license number. */
+			$note = __( 'FFL Bridge recorded a hybrid dealer selection: %1$s (%2$s). Transfer acceptance: confirmed by the dealer with FFL Bridge. License copy: not verified. Get a current license copy from the dealer, then use Mark transfer confirmed.', 'ffl-bridge-for-woocommerce' );
+		} else {
+			/* translators: 1: dealer name, 2: license number. */
+			$note = __( 'FFL Bridge recorded a hybrid dealer selection: %1$s (%2$s). Transfer acceptance: not confirmed. License copy: not verified. The shopper was asked to have the dealer send a license copy. Confirm acceptance, then use Mark transfer confirmed.', 'ffl-bridge-for-woocommerce' );
+		}
+
+		return sprintf( $note, $dealer['name'], $dealer['license'] );
 	}
 
 	/**
@@ -486,13 +1254,15 @@ final class FFL_Bridge_Checkout {
 	 */
 	private static function public_dealer( array $dealer ): array {
 		return array(
-			'name'     => (string) ( $dealer['name'] ?? '' ),
-			'address'  => (string) ( $dealer['address'] ?? '' ),
-			'city'     => (string) ( $dealer['city'] ?? '' ),
-			'state'    => (string) ( $dealer['state'] ?? '' ),
-			'zip'      => (string) ( $dealer['zip'] ?? '' ),
-			'phone'    => (string) ( $dealer['phone'] ?? '' ),
-			'distance' => isset( $dealer['distance'] ) && is_numeric( $dealer['distance'] ) ? (float) $dealer['distance'] : null,
+			'name'           => (string) ( $dealer['name'] ?? '' ),
+			'address'        => (string) ( $dealer['address'] ?? '' ),
+			'city'           => (string) ( $dealer['city'] ?? '' ),
+			'state'          => (string) ( $dealer['state'] ?? '' ),
+			'zip'            => (string) ( $dealer['zip'] ?? '' ),
+			'phone'          => (string) ( $dealer['phone'] ?? '' ),
+			'distance'       => isset( $dealer['distance'] ) && is_numeric( $dealer['distance'] ) ? (float) $dealer['distance'] : null,
+			'followUp'       => 'verified' === FFL_Bridge_Network::follow_up_state( $dealer ) ? '' : FFL_Bridge_Network::follow_up_state( $dealer ),
+			'transferStatus' => is_string( $dealer['transfer_status'] ?? null ) ? $dealer['transfer_status'] : '',
 		);
 	}
 
