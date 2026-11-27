@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">FFL Bridge app icon</title>
+  <desc id="desc">The linked FFL Bridge symbol on a dark rounded square</desc>
+  <rect x="3" y="3" width="122" height="122" rx="28" fill="#0B0F12" stroke="#2A3035" stroke-width="6"/>
+  <g transform="translate(13 13) scale(.8)">
+    <path d="M52 18H30c-7.7 0-14 6.3-14 14v64c0 7.7 6.3 14 14 14h22" fill="none" stroke="#C79A48" stroke-width="10" stroke-linecap="square" stroke-linejoin="round"/>
+    <path d="M76 18h22c7.7 0 14 6.3 14 14v64c0 7.7-6.3 14-14 14H76" fill="none" stroke="#F4F1EA" stroke-width="10" stroke-linecap="square" stroke-linejoin="round"/>
+    <path d="M16 64h48" stroke="#C79A48" stroke-width="6"/>
+    <path d="M64 64h48" stroke="#F4F1EA" stroke-width="6"/>
+    <path d="M31 55h18v18H31z" fill="#C79A48"/>
+    <path d="M79 55h18v18H79z" fill="#F4F1EA"/>
+  </g>
+</svg>

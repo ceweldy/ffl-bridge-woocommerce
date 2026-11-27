@@ -100,3 +100,139 @@
 		grid-template-columns: 1fr;
 	}
 }
+
+.ffl-bridge-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+}
+
+.ffl-bridge-badge {
+	display: inline-block;
+	padding: 0.1rem 0.5rem;
+	border: 1px solid currentColor;
+	border-radius: 999px;
+	font-size: 0.8em;
+	line-height: 1.5;
+}
+
+.ffl-bridge-badge.is-verified {
+	color: #00703c;
+}
+
+.ffl-bridge-badge.is-preferred {
+	color: #2c3338;
+	font-weight: 600;
+}
+
+.ffl-bridge-badge.is-directory {
+	color: #646970;
+}
+
+.ffl-bridge-directory-note {
+	margin: 0.25rem 0 0;
+	font-size: 0.9em;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-badge.is-verified {
+	color: #68de7c;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-badge.is-preferred,
+.ffl-bridge-theme-dark .ffl-bridge-badge.is-directory {
+	color: #dcdcde;
+}
+
+.ffl-bridge-notice {
+	margin: 0;
+	padding: 0.75rem 1rem;
+	border-left: 4px solid #dba617;
+	background: #fcf9e8;
+	color: #1e1e1e;
+}
+
+.ffl-bridge-badge.is-unconfirmed {
+	color: #996800;
+	font-weight: 600;
+}
+
+.ffl-bridge-unconfirmed-note {
+	margin: 0.25rem 0 0;
+	font-size: 0.9em;
+	font-weight: 600;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-notice {
+	background: #3a3320;
+	color: #f5f5f5;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-badge.is-unconfirmed {
+	color: #f0c33c;
+}
+
+.ffl-bridge-followup {
+	margin: 0.5rem 0;
+	padding: 0.75rem 1rem;
+	border-left: 4px solid #2271b1;
+	background: #f0f6fc;
+	color: #1e1e1e;
+	font-weight: 600;
+}
+
+.ffl-bridge-theme-dark .ffl-bridge-followup {
+	background: #1d2b3a;
+	color: #f5f5f5;
+}
+
+/* Ship to the chosen dealer: the shipping fields show the dealer address and
+   cannot be edited. The server sets the order address either way. */
+.woocommerce-shipping-fields input[readonly],
+select.ffl-bridge-locked {
+	background-color: #f6f7f7;
+	color: #50575e;
+}
+
+select.ffl-bridge-locked,
+select.ffl-bridge-locked + .select2-container {
+	pointer-events: none;
+}
+
+.ffl-bridge-ship-note {
+	margin: 0.5rem 0;
+	padding: 0.5rem 0.75rem;
+	border-left: 3px solid #2271b1;
+	background: #f0f6fc;
+	color: #1d2327;
+}
+
+body.ffl-bridge-ship-to-dealer #shipping-company,
+body.ffl-bridge-ship-to-dealer #shipping-address_1,
+body.ffl-bridge-ship-to-dealer #shipping-address_2,
+body.ffl-bridge-ship-to-dealer #shipping-city,
+body.ffl-bridge-ship-to-dealer #shipping-postcode,
+body.ffl-bridge-ship-to-dealer .wc-block-checkout__shipping-fields .wc-block-components-address-form__country,
+body.ffl-bridge-ship-to-dealer .wc-block-checkout__shipping-fields .wc-block-components-address-form__state {
+	pointer-events: none;
+	opacity: 0.75;
+}
+
+body.ffl-bridge-ship-to-dealer .wc-block-checkout__shipping-fields .wc-block-components-address-form__address_2-toggle {
+	display: none;
+}
+
+.ffl-bridge-badge.is-last-used {
+	background: #e7f5ea;
+	color: #00631d;
+}
+
+/* The optional name box takes its own row, so it fits the narrow Checkout
+   Block sidebar as well as classic checkout. */
+.ffl-bridge-field-name {
+	grid-column: 1 / -1;
+}
+
+.ffl-bridge-field-name input {
+	width: 100%;
+	box-sizing: border-box;
+}

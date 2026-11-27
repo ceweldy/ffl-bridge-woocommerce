@@ -61,4 +61,40 @@ final class CheckoutDecisionTest extends FFL_Bridge_TestCase {
 		$GLOBALS['ffl_bridge_test_term_map'][100]                 = array( 3 );
 		$this->assertFalse( FFL_Bridge_Checkout::selection_is_required() );
 	}
+
+	public function test_product_in_a_child_of_a_selected_category_applies_workflow(): void {
+		// Firearms (7) > Rifles (12); only Firearms is selected.
+		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_categories'] = array( 7 );
+		$GLOBALS['ffl_bridge_test_term_parents']                    = array( 12 => 7 );
+		$GLOBALS['ffl_bridge_test_term_map'][100]                   = array( 12 );
+
+		$this->assertTrue( FFL_Bridge_Checkout::cart_requires_ffl() );
+	}
+
+	public function test_product_in_a_grandchild_of_a_selected_category_applies_workflow(): void {
+		// Firearms (7) > Rifles (12) > Bolt action (30).
+		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_categories'] = array( 7 );
+		$GLOBALS['ffl_bridge_test_term_parents']                    = array( 30 => 12, 12 => 7 );
+		$GLOBALS['ffl_bridge_test_term_map'][100]                   = array( 30 );
+
+		$this->assertTrue( FFL_Bridge_Checkout::cart_requires_ffl() );
+	}
+
+	public function test_product_in_a_child_of_an_unselected_category_skips_workflow(): void {
+		// Accessories (3) > Optics (14); only Firearms (7) is selected.
+		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_categories'] = array( 7 );
+		$GLOBALS['ffl_bridge_test_term_parents']                    = array( 14 => 3, 12 => 7 );
+		$GLOBALS['ffl_bridge_test_term_map'][100]                   = array( 14 );
+
+		$this->assertFalse( FFL_Bridge_Checkout::cart_requires_ffl() );
+	}
+
+	public function test_selecting_only_a_child_category_does_not_apply_to_its_parent(): void {
+		// Only Rifles (12) is selected; a product in Firearms (7) alone is not covered.
+		$GLOBALS['ffl_bridge_test_options']['ffl_bridge_categories'] = array( 12 );
+		$GLOBALS['ffl_bridge_test_term_parents']                    = array( 12 => 7 );
+		$GLOBALS['ffl_bridge_test_term_map'][100]                   = array( 7 );
+
+		$this->assertFalse( FFL_Bridge_Checkout::cart_requires_ffl() );
+	}
 }
